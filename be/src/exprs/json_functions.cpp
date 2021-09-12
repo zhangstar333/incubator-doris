@@ -122,13 +122,14 @@ StringVal JsonFunctions::json_array(FunctionContext* context, int num_args,
     DCHECK_EQ(num_args - 1, flag.len);
     for (int i = 0; i < num_args - 1; ++i) {
         const StringVal& arg = json_str[i];
-        rapidjson::Value val = parse_str_with_flag(arg, flag, i, allocator);
+        const char c = *(flag.ptr + i);
+        rapidjson::Value val = parse_str_with_flag(arg, c, allocator);
         array_obj.PushBack(val, allocator);
     }
     rapidjson::StringBuffer buf;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
     array_obj.Accept(writer);
-    return AnyValUtil::from_string_temp(context, std::string(buf.GetString()));
+    return AnyValUtil::from_string_temp(context, buf.GetString());
 }
 
 StringVal JsonFunctions::json_object(FunctionContext* context, int num_args,
@@ -143,42 +144,42 @@ StringVal JsonFunctions::json_object(FunctionContext* context, int num_args,
     DCHECK_EQ(num_args - 1, flag.len);
     for (int i = 1; i < num_args - 1; i = i + 2) {
         const StringVal& arg = json_str[i];
+        const char c = *(flag.ptr + i);
         rapidjson::Value key(rapidjson::kStringType);
         key.SetString((char*)json_str[i - 1].ptr, json_str[i - 1].len, allocator);
-        rapidjson::Value val = parse_str_with_flag(arg, flag, i, allocator);
+        rapidjson::Value val = parse_str_with_flag(arg, c, allocator);
         document.AddMember(key, val, allocator);
     }
     rapidjson::StringBuffer buf;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
     document.Accept(writer);
-    return AnyValUtil::from_string_temp(context, std::string(buf.GetString()));
+    return AnyValUtil::from_string_temp(context, buf.GetString());
 }
 
-rapidjson::Value JsonFunctions::parse_str_with_flag(const StringVal& arg, const StringVal& flag,
-                                                    const int num,
+rapidjson::Value JsonFunctions::parse_str_with_flag(const StringVal& arg, const char c,
                                                     rapidjson::Document::AllocatorType& allocator) {
     rapidjson::Value val;
-    if (*(flag.ptr + num) == '0') { //null
+    if (c == '0') { //null
         rapidjson::Value nullObject(rapidjson::kNullType);
         val = nullObject;
-    } else if (*(flag.ptr + num) == '1') { //bool
+    } else if (c == '1') { //bool
         bool res = ((arg == "1") ? true : false);
         val.SetBool(res);
-    } else if (*(flag.ptr + num) == '2') { //int
+    } else if (c == '2') { //int
         std::stringstream ss;
         ss << arg.ptr;
         int number = 0;
         ss >> number;
         val.SetInt(number);
-    } else if (*(flag.ptr + num) == '3') { //double
+    } else if (c == '3') { //double
         std::stringstream ss;
         ss << arg.ptr;
         double number = 0.0;
         ss >> number;
         val.SetDouble(number);
-    } else if (*(flag.ptr + num) == '4' || *(flag.ptr + num) == '5') {
+    } else if (c == '4' || c == '5') {
         StringPiece str((char*)arg.ptr, arg.len);
-        if (*(flag.ptr + num) == '4') str = str.substr(1, str.length() - 2);
+        if (c == '4') str = str.substr(1, str.length() - 2);
         val.SetString(str.data(), str.length(), allocator);
     } else {
         DCHECK(false) << "parse json type error with unknown type";
@@ -192,11 +193,11 @@ StringVal JsonFunctions::json_quote(FunctionContext* context, const StringVal& j
     rapidjson::Value array_obj(rapidjson::kObjectType);
     rapidjson::Document document;
     rapidjson::Document::AllocatorType& allocator = document.GetAllocator();
-    array_obj.SetString(rapidjson::StringRef((char*)json_str.ptr, json_str.len));
+    array_obj.SetString((char*)json_str.ptr, json_str.len);
     rapidjson::StringBuffer buf;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
     array_obj.Accept(writer);
-    return AnyValUtil::from_string_temp(context, std::string(buf.GetString()));
+    return AnyValUtil::from_string_temp(context, buf.GetString());
 }
 
 rapidjson::Value* JsonFunctions::match_value(const std::vector<JsonPath>& parsed_paths,
