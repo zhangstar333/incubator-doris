@@ -251,7 +251,9 @@ public class FunctionCallExpr extends Expr {
             result.add(children.get(i).toSql());
         }
         sb.append(Joiner.on(", ").join(result)).append(")");
-        if (fnName.getFunction().equalsIgnoreCase("json_quote") || isJsonFunction) {
+        if (fnName.getFunction().equalsIgnoreCase("json_quote") || 
+            fnName.getFunction().equalsIgnoreCase("json_unquote") || 
+            isJsonFunction) {
             return forJSON(sb.toString());
         }
         return sb.toString();

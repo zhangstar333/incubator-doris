@@ -1134,7 +1134,9 @@ visible_functions = [
     [['json_quote'], 'VARCHAR', ['VARCHAR'],
             '_ZN5doris13JsonFunctions10json_quoteEPN9doris_udf15FunctionContextERKNS1_9StringValE',
             '', '', '', ''],
-                    
+    [['json_unquote'], 'VARCHAR', ['VARCHAR'],
+            '_ZN5doris13JsonFunctions12json_unquoteEPN9doris_udf15FunctionContextERKNS1_9StringValE',
+            '', '', '', ''],                
     #hll function
     [['hll_cardinality'], 'BIGINT', ['VARCHAR'],
         '_ZN5doris12HllFunctions15hll_cardinalityEPN9doris_udf15FunctionContextERKNS1_9StringValE',

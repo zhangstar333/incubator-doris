@@ -94,6 +94,8 @@ public:
                                             const doris_udf::StringVal* json_str);
     static doris_udf::StringVal json_quote(doris_udf::FunctionContext* context,
                                            const doris_udf::StringVal& json_str);
+    static doris_udf::StringVal json_unquote(doris_udf::FunctionContext* context,
+                                           const doris_udf::StringVal& json_str);
 
     /**
      * The `document` parameter must be has parsed.

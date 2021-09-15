@@ -25,6 +25,7 @@
 #include <sys/time.h>
 
 #include <boost/algorithm/string.hpp>
+#include <boost/locale/encoding_utf.hpp>
 #include <boost/tokenizer.hpp>
 #include <iomanip>
 #include <sstream>
@@ -198,6 +199,29 @@ StringVal JsonFunctions::json_quote(FunctionContext* context, const StringVal& j
     rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
     array_obj.Accept(writer);
     return AnyValUtil::from_string_temp(context, buf.GetString());
+}
+
+StringVal JsonFunctions::json_unquote(FunctionContext* context, const StringVal& json_str) {
+    if (json_str.is_null) {
+        return StringVal::null();
+    }
+    if ((!json_str.len)) {
+        return StringVal();
+    }
+    StringVal result = json_str.copy_from(context, json_str.ptr, json_str.len);
+    rapidjson::Document doc(rapidjson::kObjectType);
+    rapidjson::Document::AllocatorType& allocator = doc.GetAllocator();
+    doc.SetObject();
+    if ((*result.ptr) == '"' && (*(result.ptr + json_str.len - 1)) == '"' && json_str.len != 1) {
+        doc.Parse((char*)json_str.ptr);
+        if (doc.HasParseError()) {
+            DCHECK(false) << "the input string of json type is error";
+            return StringVal();
+        }
+        doc.ParseInsitu((char*)result.ptr);
+        return StringVal(result.ptr + 1, strlen((char*)result.ptr) - 1);
+    }
+    return result;
 }
 
 rapidjson::Value* JsonFunctions::match_value(const std::vector<JsonPath>& parsed_paths,
