@@ -153,7 +153,7 @@ public:
     }
 };
 
-using FunctionStrToDate = FunctionBinaryStringOperateToNullType<StrToDate>;
+using FunctionStrToDate = FunctionStrToDateOrDateTime<StrToDate>;
 using FunctionMakeDate =
         FunctionBinaryToNullType<DataTypeInt32, DataTypeInt32, MakeDateImpl, NameMakeDate>;
 
