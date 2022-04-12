@@ -1652,5 +1652,5 @@ public class Config extends ConfigBase {
     public static boolean skip_compaction_slower_replica = true;
 
     @ConfField
-    public static boolean enable_vectorized_load = false;
+    public static boolean enable_vectorized_load = true;
 }
