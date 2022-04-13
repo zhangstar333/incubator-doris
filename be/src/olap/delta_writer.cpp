@@ -250,7 +250,7 @@ OLAPStatus DeltaWriter::wait_flush() {
 
 void DeltaWriter::_reset_mem_table() {
     _mem_table.reset(new MemTable(_tablet->tablet_id(), _schema.get(), _tablet_schema, _req.slots,
-                                  _req.tuple_desc, _tablet->keys_type(), _rowset_writer.get()));
+                                  _req.tuple_desc, _tablet->keys_type(), _rowset_writer.get(), config::enable_vectorized_load));
 }
 
 OLAPStatus DeltaWriter::close() {
