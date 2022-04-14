@@ -144,8 +144,10 @@ Status ExecEnv::_init(const std::vector<StorePath>& store_paths) {
     _bfd_parser = BfdParser::create();
     _broker_mgr = new BrokerMgr(this);
     if (config::enable_vectorized_load) {
+        LOG(INFO)<<"config::enable_vectorized_load YES YES";
         _load_channel_mgr = new vectorized::VLoadChannelMgr();
     } else {
+        LOG(INFO)<<"config::enable_vectorized_load NO NO";
         _load_channel_mgr = new LoadChannelMgr();
     }
     _load_stream_mgr = new LoadStreamMgr();

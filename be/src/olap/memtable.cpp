@@ -49,11 +49,13 @@ MemTable::MemTable(int64_t tablet_id, Schema* schema, const TabletSchema* tablet
           _agg_functions(schema->num_columns()),
           _mem_usage(0){
     if (support_vec){
+        LOG(INFO)<<"support_vec Yes Yes";
         _skip_list = nullptr;
         _vec_row_comparator = std::make_shared<RowInBlockComparator>(_schema);
         _vec_skip_list = new VecTable(_vec_row_comparator.get(), _table_mem_pool.get(),
                                 _keys_type == KeysType::DUP_KEYS);
     }else{
+        LOG(INFO)<<"support_vec No NO";
         _vec_skip_list =nullptr;
         if (tablet_schema->sort_type() == SortType::ZORDER) {
             _row_comparator =

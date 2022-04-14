@@ -143,7 +143,7 @@ public:
     }
 
     void Run() override {
-        DCHECK(_packet_in_flight);
+        //DCHECK(_packet_in_flight);
         if (cntl.Failed()) {
             LOG(WARNING) << "failed to send brpc batch, error=" << berror(cntl.ErrorCode())
                          << ", error_text=" << cntl.ErrorText();
