@@ -132,6 +132,14 @@ Status BaseScanner::init_expr_ctxes() {
                << ", name=" << slot_desc->col_name();
             return Status::InternalError(ss.str());
         }
+            
+        // From the thrift expressions create the real exprs.
+        vectorized::VExprContext* vctx = nullptr;
+        RETURN_IF_ERROR(vectorized::VExpr::create_expr_tree(_state->obj_pool(), it->second, &vctx));
+        RETURN_IF_ERROR(vctx->prepare(_state, *_row_desc.get(), _mem_tracker));
+        RETURN_IF_ERROR(vctx->open(_state));
+        _dest_vexpr_ctx.emplace_back(vctx);
+        
         ExprContext* ctx = nullptr;
         RETURN_IF_ERROR(Expr::create_expr_tree(_state->obj_pool(), it->second, &ctx));
         RETURN_IF_ERROR(ctx->prepare(_state, *_row_desc.get(), _mem_tracker));

@@ -18,6 +18,8 @@
 #ifndef BE_SRC_EXEC_BASE_SCANNER_H_
 #define BE_SRC_EXEC_BASE_SCANNER_H_
 
+#include "vec/exprs/vexpr.h"
+#include "vec/exprs/vexpr_context.h"
 #include "common/status.h"
 #include "exprs/expr.h"
 #include "runtime/tuple.h"
@@ -34,6 +36,7 @@ class RuntimeState;
 class ExprContext;
 
 namespace vectorized {
+class VExprContext;
 class IColumn;
 using MutableColumnPtr = IColumn::MutablePtr;
 }
@@ -63,7 +66,12 @@ public:
 
     // Get next block
     virtual Status get_next(std::vector<vectorized::MutableColumnPtr>& columns, bool* eof) {
-        return Status::NotSupported("Not Implemented get block");
+        return Status::NotSupported("Not Implemented get columns");
+    }
+
+    // Get next block
+    virtual Status get_next(vectorized::Block& output_block, std::vector<vectorized::MutableColumnPtr>& columns, bool* eof) {
+        return Status::NotSupported("Not Implemented get columns");
     }
 
     // Close this scanner
@@ -74,6 +82,9 @@ public:
                                          const std::vector<std::string>& columns_from_path);
 
     void free_expr_local_allocations();
+    
+    MemPool* mem_pool() { return _mem_pool.get(); }
+
 protected:
     RuntimeState* _state;
     const TBrokerScanRangeParams& _params;
@@ -94,6 +105,8 @@ protected:
     // Dest tuple descriptor and dest expr context
     const TupleDescriptor* _dest_tuple_desc;
     std::vector<ExprContext*> _dest_expr_ctx;
+    // vectorized 
+    std::vector<vectorized::VExprContext*> _dest_vexpr_ctx;
     // the map values of dest slot id to src slot desc
     // if there is not key of dest slot id in dest_sid_to_src_sid_without_trans, it will be set to nullptr
     std::vector<SlotDescriptor*> _src_slot_descs_order_by_dest;

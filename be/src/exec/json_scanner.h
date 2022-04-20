@@ -132,7 +132,8 @@ public:
     Status read_json_row(Tuple* tuple, const std::vector<SlotDescriptor*>& slot_descs, MemPool* tuple_pool,
                 bool* is_empty_row, bool* eof);
 
-private:
+// private:
+protected:
     Status (JsonReader::*_handle_json_callback)(Tuple* tuple,
                                                 const std::vector<SlotDescriptor*>& slot_descs,
                                                 MemPool* tuple_pool, bool* is_empty_row, bool* eof);
@@ -160,7 +161,8 @@ private:
     void _close();
     Status _generate_json_paths(const std::string& jsonpath,
                                 std::vector<std::vector<JsonPath>>* vect);
-
+    rapidjson::Value* get_json_doc() { return _json_doc; }
+    
 private:
     int _next_line;
     int _total_lines;

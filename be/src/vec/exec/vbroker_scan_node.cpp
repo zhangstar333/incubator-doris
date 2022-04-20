@@ -125,7 +125,9 @@ Status VBrokerScanNode::scanner_scan(const TBrokerScanRange& scan_range,
 
     const int batch_size = _runtime_state->batch_size();
     size_t slot_num = _tuple_desc->slots().size();
-
+    LOG(INFO) << "VBrokerScanNode::scanner_scan: batch_size=" << batch_size
+              << " ,slot_num=" << slot_num;
+    uint32_t count = 0;
     while (!scanner_eof) {
         std::shared_ptr<vectorized::Block> block(new vectorized::Block());
         std::vector<vectorized::MutableColumnPtr> columns(slot_num);
@@ -140,26 +142,44 @@ Status VBrokerScanNode::scanner_scan(const TBrokerScanRange& scan_range,
                 return Status::OK();
             }
 
-            RETURN_IF_ERROR(scanner->get_next(columns, &scanner_eof));
+            RETURN_IF_ERROR(scanner->get_next(*(block.get()), columns, &scanner_eof));
             if (scanner_eof) {
                 break;
             }
+            count++;
         }
+        LOG(INFO) << "VBrokerScanNode::scanner_scan: count=" << count;
 
-        if (columns[0]->size() > 0) {
+        // if (columns[0]->size() > 0) {
+        if (block->rows() > 0) {
+            /*
             auto n_columns = 0;
             for (const auto slot_desc : _tuple_desc->slots()) {
                 block->insert(ColumnWithTypeAndName(std::move(columns[n_columns++]),
                                                     slot_desc->get_data_type_ptr(),
                                                     slot_desc->col_name()));
             }
-
+            */
             auto old_rows = block->rows();
 
             RETURN_IF_ERROR(VExprContext::filter_block(_vconjunct_ctx_ptr, block.get(),
                                                        _tuple_desc->slots().size()));
 
             counter->num_rows_unselected += old_rows - block->rows();
+            
+            /*          
+            vectorized::Block output_block(block->get_columns_with_type_and_name());
+            Status status = Status::OK();
+            if (!_dest_vexpr_ctx.empty()) {
+                // Do vectorized expr here to speed up load
+                output_block = vectorized::VExprContext::get_output_block_after_execute_exprs(
+                                        _dest_vexpr_ctx, *(block.get()), status);
+                                        
+                if (UNLIKELY(output_block.rows() == 0)) {
+                    return status;
+                }
+            } 
+            */
 
             std::unique_lock<std::mutex> l(_batch_queue_lock);
             while (_process_status.ok() && !_scan_finished.load() &&
@@ -184,6 +204,8 @@ Status VBrokerScanNode::scanner_scan(const TBrokerScanRange& scan_range,
                 return Status::Cancelled("Cancelled");
             }
             // Queue size Must be smaller than _max_buffered_batches
+            LOG(INFO) << "VBrokerScanNode::scanner_scan: dump block="
+                    << block->dump_data(0, 10);
             _block_queue.push_back(block);
 
             // Notify reader to
