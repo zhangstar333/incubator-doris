@@ -107,7 +107,7 @@ Status VJsonScanner::get_next(vectorized::Block& output_block, std::vector<vecto
         }
         
         bool is_empty_row = false;
-        RETURN_IF_ERROR(_cur_vjson_reader->read_json_column(columns, _dest_tuple_desc->slots(), 
+        RETURN_IF_ERROR(_cur_vjson_reader->read_json_column(columns, _src_slot_descs, 
                                                         &is_empty_row, &_cur_reader_eof));
         if (is_empty_row) {
             // Read empty row, just continue
@@ -121,34 +121,43 @@ Status VJsonScanner::get_next(vectorized::Block& output_block, std::vector<vecto
     }
     LOG(INFO) << "VJsonScanner::get_next count=" << count;
     
-    if (columns[0]->size() > 0) {
-        if (config::enable_vectorized_load && !_dest_vexpr_ctx.empty()) {
-            auto n_columns = 0;
-            for (const auto slot_desc : _dest_tuple_desc->slots()) {
-                temp_block->insert(ColumnWithTypeAndName(std::move(columns[n_columns++]),
-                                                        slot_desc->get_data_type_ptr(),
-                                                        slot_desc->col_name()));
-            }
-            LOG(INFO) << "insert the temp_block, dump temp_block="
-                      << temp_block->dump_data(0, 10);
+    // if (columns[0]->size() > 0) {
+    //     if (config::enable_vectorized_load && !_dest_vexpr_ctx.empty()) {
+    //         auto n_columns = 0;
+    //         for (const auto slot_desc : _dest_tuple_desc->slots()) {
+    //             temp_block->insert(ColumnWithTypeAndName(std::move(columns[n_columns++]),
+    //                                                     slot_desc->get_data_type_ptr(),
+    //                                                     slot_desc->col_name()));
+    //         }
+    //         LOG(INFO) << "insert the temp_block, dump temp_block="
+    //                   << temp_block->dump_data(0, 10);
             
-            // vectorized::Block block(temp_block->get_columns_with_type_and_name());
-            // Do vectorized expr here to speed up load
-            output_block = vectorized::VExprContext::get_output_block_after_execute_exprs(
-                        _dest_vexpr_ctx, *(temp_block.get()), status);
-            if (UNLIKELY(output_block.rows() == 0)) {
-                return status;
-            }
-        } else {
-            auto n_columns = 0;
-            for (const auto slot_desc : _dest_tuple_desc->slots()) {
-                output_block.insert(ColumnWithTypeAndName(std::move(columns[n_columns++]),
-                                                        slot_desc->get_data_type_ptr(),
-                                                        slot_desc->col_name()));
-            }
-        }
+    //         // vectorized::Block block(temp_block->get_columns_with_type_and_name());
+    //         // Do vectorized expr here to speed up load
+    //         output_block = vectorized::VExprContext::get_output_block_after_execute_exprs(
+    //                     _dest_vexpr_ctx, *(temp_block.get()), status);
+    //         if (UNLIKELY(output_block.rows() == 0)) {
+    //             return status;
+    //         }
+    //     } else {
+    //         auto n_columns = 0;
+    //         for (const auto slot_desc : _dest_tuple_desc->slots()) {
+    //             output_block.insert(ColumnWithTypeAndName(std::move(columns[n_columns++]),
+    //                                                     slot_desc->get_data_type_ptr(),
+    //                                                     slot_desc->col_name()));
+    //         }
+    //     }
+    // }
+    auto n_columns = 0;
+    for (const auto slot_desc : _src_slot_descs) {
+        temp_block->insert(ColumnWithTypeAndName(std::move(columns[n_columns++]),
+                                                slot_desc->get_data_type_ptr(),
+                                                slot_desc->col_name()));
     }
-
+    // vectorized::Block block(temp_block->get_columns_with_type_and_name());
+    // Do vectorized expr here to speed up load
+    output_block = vectorized::VExprContext::get_output_block_after_execute_exprs(
+                _dest_vexpr_ctx, *(temp_block), status);
     if (_scanner_eof) {
         *eof = true;
     } else {

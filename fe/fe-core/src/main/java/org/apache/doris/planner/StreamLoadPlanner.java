@@ -194,7 +194,7 @@ public class StreamLoadPlanner {
         // for stream load, we use exec_mem_limit to limit the memory usage of load channel.
         queryOptions.setLoadMemLimit(taskInfo.getMemLimit());
 
-        if (Config.enable_vectorized_load || true) {
+        if (Config.enable_vectorized_load) {
             LOG.info("Config.enable_vectorized_load is True in FE and setEnableVectorizedEngine(true)");
             queryOptions.setEnableVectorizedEngine(true);
         }

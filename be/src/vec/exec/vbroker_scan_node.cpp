@@ -25,6 +25,7 @@
 #include "runtime/mem_tracker.h"
 #include "util/runtime_profile.h"
 #include "util/types.h"
+#include "vec/columns/column_string.h"
 #include "vec/exprs/vexpr_context.h"
 
 namespace doris::vectorized {
@@ -131,8 +132,9 @@ Status VBrokerScanNode::scanner_scan(const TBrokerScanRange& scan_range,
     while (!scanner_eof) {
         std::shared_ptr<vectorized::Block> block(new vectorized::Block());
         std::vector<vectorized::MutableColumnPtr> columns(slot_num);
+        auto string_type = make_nullable(std::make_shared<DataTypeString>());
         for (int i = 0; i < slot_num; i++) {
-            columns[i] = _tuple_desc->slots()[i]->get_empty_mutable_column();
+            columns[i] = string_type->create_column();
         }
 
         while (columns[0]->size() < batch_size && !scanner_eof) {
