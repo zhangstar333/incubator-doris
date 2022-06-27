@@ -133,6 +133,14 @@ void AggFnEvaluator::execute_batch_add(Block* block, size_t offset, AggregateDat
     _function->add_batch(block->rows(), places, offset, _agg_columns.data(), arena);
 }
 
+void AggFnEvaluator::merge_bacth(size_t batch_size, AggregateDataPtr* places, AggregateDataPtr rhs, size_t offset ,Arena* arena) {
+    _function->merge_bacth(batch_size, places, rhs, offset, arena);
+}
+
+void AggFnEvaluator::merge_single(size_t batch_size, AggregateDataPtr place, AggregateDataPtr rhs, size_t offset ,Arena* arena) {
+    _function->merge_single(batch_size, place, rhs, offset, arena);
+}
+
 void AggFnEvaluator::insert_result_info(AggregateDataPtr place, IColumn* column) {
     _function->insert_result_into(place, *column);
 }

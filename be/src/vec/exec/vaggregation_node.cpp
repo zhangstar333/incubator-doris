@@ -531,6 +531,9 @@ Status AggregationNode::_merge_without_key(Block* block) {
     DCHECK(_agg_data.without_key != nullptr);
     std::unique_ptr<char[]> deserialize_buffer(new char[_total_size_of_aggregate_states]);
     int rows = block->rows();
+
+    std::unique_ptr<char[]> deser_buf(new char[_total_size_of_aggregate_states * rows]);
+
     for (int i = 0; i < _aggregate_evaluators.size(); ++i) {
         DCHECK(_aggregate_evaluators[i]->input_exprs_ctxs().size() == 1 &&
                _aggregate_evaluators[i]->input_exprs_ctxs()[0]->root()->is_slot_ref());
@@ -542,21 +545,34 @@ Status AggregationNode::_merge_without_key(Block* block) {
                 column = ((ColumnNullable*)column.get())->get_nested_column_ptr();
             }
 
-            for (int j = 0; j < rows; ++j) {
-                VectorBufferReader buffer_reader(((ColumnString*)(column.get()))->get_data_at(j));
-                _create_agg_status(deserialize_buffer.get());
+            // for (int j = 0; j < rows; ++j) {
+            //     VectorBufferReader buffer_reader(((ColumnString*)(column.get()))->get_data_at(j));
+            //     _create_agg_status(deserialize_buffer.get());
 
-                _aggregate_evaluators[i]->function()->deserialize(
-                        deserialize_buffer.get() + _offsets_of_aggregate_states[i], buffer_reader,
-                        &_agg_arena_pool);
+            //     _aggregate_evaluators[i]->function()->deserialize(
+            //             deserialize_buffer.get() + _offsets_of_aggregate_states[i], buffer_reader,
+            //             &_agg_arena_pool);
 
-                _aggregate_evaluators[i]->function()->merge(
-                        _agg_data.without_key + _offsets_of_aggregate_states[i],
-                        deserialize_buffer.get() + _offsets_of_aggregate_states[i],
-                        &_agg_arena_pool);
+            //     _aggregate_evaluators[i]->function()->merge(
+            //             _agg_data.without_key + _offsets_of_aggregate_states[i],
+            //             deserialize_buffer.get() + _offsets_of_aggregate_states[i],
+            //             &_agg_arena_pool);
 
-                _destory_agg_status(deserialize_buffer.get());
+            //     _destory_agg_status(deserialize_buffer.get());
+            // }
+            for (int row = 0; row < rows; ++row) {
+                VectorBufferReader buffer_reader(((ColumnString*)(column.get()))->get_data_at(row));
+                _aggregate_evaluators[i]->create(deser_buf.get() + (_total_size_of_aggregate_states * row));
+                _aggregate_evaluators[i]->function()->deserialize(deser_buf.get() + (_total_size_of_aggregate_states * row), buffer_reader, &_agg_arena_pool);
+
             }
+
+            _aggregate_evaluators[i]->merge_single(rows, _agg_data.without_key + _offsets_of_aggregate_states[i], deser_buf.get(), _total_size_of_aggregate_states, &_agg_arena_pool);
+
+            for (int row = 0; row < rows; ++row) {
+                _aggregate_evaluators[i]->destroy(deser_buf.get() + (_total_size_of_aggregate_states * row));
+            }                        
+
         } else {
             _aggregate_evaluators[i]->execute_single_add(
                     block, _agg_data.without_key + _offsets_of_aggregate_states[i],
@@ -1055,6 +1071,9 @@ Status AggregationNode::_merge_with_serialized_key(Block* block) {
             _agg_data._aggregated_method_variant);
 
     std::unique_ptr<char[]> deserialize_buffer(new char[_total_size_of_aggregate_states]);
+    std::vector<std::unique_ptr<char[]>> deser(rows);
+
+    std::unique_ptr<char[]> deser_buf(new char[_total_size_of_aggregate_states * rows]);
 
     for (int i = 0; i < _aggregate_evaluators.size(); ++i) {
         DCHECK(_aggregate_evaluators[i]->input_exprs_ctxs().size() == 1 &&
@@ -1067,21 +1086,51 @@ Status AggregationNode::_merge_with_serialized_key(Block* block) {
                 column = ((ColumnNullable*)column.get())->get_nested_column_ptr();
             }
 
-            for (int j = 0; j < rows; ++j) {
-                VectorBufferReader buffer_reader(((ColumnString*)(column.get()))->get_data_at(j));
-                _create_agg_status(deserialize_buffer.get());
+            // for (int j = 0; j < rows; ++j) {
+            //     VectorBufferReader buffer_reader(((ColumnString*)(column.get()))->get_data_at(j));
+            //     _create_agg_status(deserialize_buffer.get());
 
-                _aggregate_evaluators[i]->function()->deserialize(
-                        deserialize_buffer.get() + _offsets_of_aggregate_states[i], buffer_reader,
-                        &_agg_arena_pool);
+            //     _aggregate_evaluators[i]->function()->deserialize(
+            //             deserialize_buffer.get() + _offsets_of_aggregate_states[i], buffer_reader,
+            //             &_agg_arena_pool);
 
-                _aggregate_evaluators[i]->function()->merge(
-                        places.data()[j] + _offsets_of_aggregate_states[i],
-                        deserialize_buffer.get() + _offsets_of_aggregate_states[i],
-                        &_agg_arena_pool);
+            //     _aggregate_evaluators[i]->function()->merge(
+            //             places.data()[j] + _offsets_of_aggregate_states[i],
+            //             deserialize_buffer.get() + _offsets_of_aggregate_states[i],
+            //             &_agg_arena_pool);
 
-                _destory_agg_status(deserialize_buffer.get());
+            //     _destory_agg_status(deserialize_buffer.get());
+            // }
+
+            // for (int row = 0; row < rows; ++row) {
+            //     deser[row].reset(new char[_total_size_of_aggregate_states]);
+            //     VectorBufferReader buffer_reader(((ColumnString*)(column.get()))->get_data_at(row));
+            //     _aggregate_evaluators[i]->create(deser[row].get() +
+            //                                      _offsets_of_aggregate_states[i]);
+            //     _aggregate_evaluators[i]->function()->deserialize(
+            //             deser[row].get() + _offsets_of_aggregate_states[i], buffer_reader,
+            //             &_agg_arena_pool);
+            // }
+
+            for (int row = 0; row < rows; ++row) {
+                VectorBufferReader buffer_reader(((ColumnString*)(column.get()))->get_data_at(row));
+                _aggregate_evaluators[i]->create(deser_buf.get() + (_total_size_of_aggregate_states * row));
+                _aggregate_evaluators[i]->function()->deserialize(deser_buf.get() + (_total_size_of_aggregate_states * row), buffer_reader, &_agg_arena_pool);
+
             }
+
+            // _aggregate_evaluators[i]->merge_bacth(rows, places.data(), reinterpret_cast<AggregateDataPtr*>(deser.data()), &_agg_arena_pool);
+
+            // for (int row = 0; row < rows; ++row) {
+            //     _aggregate_evaluators[i]->destroy(deser[row].get() + _offsets_of_aggregate_states[i]);
+            // }
+
+            _aggregate_evaluators[i]->merge_bacth(rows, places.data(), deser_buf.get(), _total_size_of_aggregate_states, &_agg_arena_pool);
+
+            for (int row = 0; row < rows; ++row) {
+                _aggregate_evaluators[i]->destroy(deser_buf.get() + (_total_size_of_aggregate_states * row));
+            }
+
         } else {
             _aggregate_evaluators[i]->execute_batch_add(block, _offsets_of_aggregate_states[i],
                                                         places.data(), &_agg_arena_pool);

@@ -59,6 +59,10 @@ public:
 
     void insert_result_info(AggregateDataPtr place, IColumn* column);
 
+    void merge_bacth(size_t batch_size, AggregateDataPtr* places, AggregateDataPtr rhs, size_t offset ,Arena* arena);
+
+    void merge_single(size_t batch_size, AggregateDataPtr place, AggregateDataPtr rhs, size_t offset ,Arena* arena);
+
     void reset(AggregateDataPtr place);
 
     DataTypePtr& data_type() { return _data_type; }

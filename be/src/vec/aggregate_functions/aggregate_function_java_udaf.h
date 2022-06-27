@@ -18,10 +18,10 @@
 #pragma once
 
 #ifdef LIBJVM
-
 #include <jni.h>
 #include <unistd.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -48,7 +48,7 @@ const char* UDAF_EXECUTOR_CLOSE_SIGNATURE = "()V";
 const char* UDAF_EXECUTOR_DESTROY_SIGNATURE = "(J)V";
 const char* UDAF_EXECUTOR_ADD_SIGNATURE = "(ZJJ)V";
 const char* UDAF_EXECUTOR_SERIALIZE_SIGNATURE = "(J)[B";
-const char* UDAF_EXECUTOR_MERGE_SIGNATURE = "(J[B)V";
+const char* UDAF_EXECUTOR_MERGE_SIGNATURE = "([Ljava/lang/Object;JZ)V";
 const char* UDAF_EXECUTOR_RESULT_SIGNATURE = "(JJ)Z";
 // Calling Java method about those signture means: "(argument-types)return-type"
 // https://www.iitk.ac.in/esc101/05Aug/tutorial/native1.1/implementing/method.html
@@ -61,7 +61,8 @@ public:
         input_values_buffer_ptr.reset(new int64_t[num_args]);
         input_nulls_buffer_ptr.reset(new int64_t[num_args]);
         input_offsets_ptrs.reset(new int64_t[num_args]);
-        input_place_ptrs.reset(new int64_t);
+        input_add_place_ptrs.reset(new int64_t);
+        input_merge_place_ptrs.reset(new int64_t);
         output_value_buffer.reset(new int64_t);
         output_null_value.reset(new int64_t);
         output_offsets_ptr.reset(new int64_t);
@@ -98,7 +99,8 @@ public:
             ctor_params.__set_input_buffer_ptrs((int64_t)input_values_buffer_ptr.get());
             ctor_params.__set_input_nulls_ptrs((int64_t)input_nulls_buffer_ptr.get());
             ctor_params.__set_output_buffer_ptr((int64_t)output_value_buffer.get());
-            ctor_params.__set_input_places_ptr((int64_t)input_place_ptrs.get());
+            ctor_params.__set_input_add_places_ptr((int64_t)input_add_place_ptrs.get());
+            ctor_params.__set_input_merge_places_ptr((int64_t)input_merge_place_ptrs.get());
 
             ctor_params.__set_output_null_ptr((int64_t)output_null_value.get());
             ctor_params.__set_output_offsets_ptr((int64_t)output_offsets_ptr.get());
@@ -147,20 +149,40 @@ public:
                                             argument_types[arg_idx]->get_name()));
             }
         }
-        *input_place_ptrs = reinterpret_cast<int64_t>(places_address);
+        *input_add_place_ptrs = reinterpret_cast<int64_t>(places_address);
         env->CallNonvirtualVoidMethod(executor_obj, executor_cl, executor_add_id, is_single_place,
                                       row_num_start, row_num_end);
         return JniUtil::GetJniExceptionMsg(env);
     }
 
-    Status merge(const AggregateJavaUdafData& rhs, int64_t place) {
+    // Status merge(const AggregateJavaUdafData& rhs, int64_t place) {
+    //     JNIEnv* env = nullptr;
+    //     RETURN_NOT_OK_STATUS_WITH_WARN(JniUtil::GetJNIEnv(&env), "Java-Udaf merge function");
+    //     serialize_data = rhs.serialize_data;
+    //     long len = serialize_data.length();
+    //     jbyteArray arr = env->NewByteArray(len);
+    //     env->SetByteArrayRegion(arr, 0, len, reinterpret_cast<jbyte*>(serialize_data.data()));
+    //     //env->CallNonvirtualVoidMethod(executor_obj, executor_cl, executor_merge_id, place, arr);
+    //     return JniUtil::GetJniExceptionMsg(env);
+    // }
+
+    Status merge_bacth(const int64_t places_address[], AggregateDataPtr rhs, size_t offset,
+                       size_t batch, bool is_single_place) {
         JNIEnv* env = nullptr;
         RETURN_NOT_OK_STATUS_WITH_WARN(JniUtil::GetJNIEnv(&env), "Java-Udaf merge function");
-        serialize_data = rhs.serialize_data;
-        long len = serialize_data.length();
-        jbyteArray arr = env->NewByteArray(len);
-        env->SetByteArrayRegion(arr, 0, len, reinterpret_cast<jbyte*>(serialize_data.data()));
-        env->CallNonvirtualVoidMethod(executor_obj, executor_cl, executor_merge_id, place, arr);
+        jclass byte_arr_cl = env->FindClass("[B");
+        jobjectArray arrs = env->NewObjectArray(batch, byte_arr_cl, nullptr);
+        for (int i = 0; i < batch; ++i) {
+            serialize_data = std::move(
+                    (*reinterpret_cast<AggregateJavaUdafData*>(rhs + (offset * i))).serialize_data);
+            int len = serialize_data.length();
+            jbyteArray arr = env->NewByteArray(len);
+            env->SetByteArrayRegion(arr, 0, len, reinterpret_cast<jbyte*>(serialize_data.data()));
+            env->SetObjectArrayElement(arrs, i, arr);
+        }
+        *input_merge_place_ptrs = reinterpret_cast<int64_t>(places_address);
+        env->CallNonvirtualVoidMethod(executor_obj, executor_cl, executor_merge_id, arrs, batch,
+                                      is_single_place);
         return JniUtil::GetJniExceptionMsg(env);
     }
 
@@ -247,11 +269,6 @@ public:
         return Status::OK();
     }
 
-    Status change_flag_to(bool* flag, const bool to) {
-        *flag = to;
-        return Status::OK();
-    }
-
 private:
     Status register_func_id(JNIEnv* env) {
         auto register_id = [&](const char* func_name, const char* func_sign, jmethodID& func_id) {
@@ -293,12 +310,12 @@ private:
     std::unique_ptr<int64_t[]> input_values_buffer_ptr;
     std::unique_ptr<int64_t[]> input_nulls_buffer_ptr;
     std::unique_ptr<int64_t[]> input_offsets_ptrs;
-    std::unique_ptr<int64_t> input_place_ptrs;
+    std::unique_ptr<int64_t> input_add_place_ptrs;
+    std::unique_ptr<int64_t> input_merge_place_ptrs;
     std::unique_ptr<int64_t> output_value_buffer;
     std::unique_ptr<int64_t> output_null_value;
     std::unique_ptr<int64_t> output_offsets_ptr;
     std::unique_ptr<int64_t> output_intermediate_state_ptr;
-
     int argument_size = 0;
     std::string serialize_data;
 };
@@ -312,8 +329,6 @@ public:
               _fn(fn),
               _return_type(return_type),
               _first_created(true),
-              _destory_deserialize(false),
-              _destoryed_exec_place(false),
               _exec_place(nullptr) {}
     ~AggregateJavaUdaf() = default;
 
@@ -335,15 +350,9 @@ public:
     }
 
     void destroy(AggregateDataPtr __restrict place) const noexcept override {
-        if (_destory_deserialize) {
-            this->data(place).change_flag_to(const_cast<bool*>(&_destory_deserialize), false);
-        } else {
-            if (!_destoryed_exec_place) {
-                this->data(_exec_place)
-                        .change_flag_to(const_cast<bool*>(&_destoryed_exec_place), true);
-                this->data(_exec_place).destroy(reinterpret_cast<int64_t>(place));
-                this->data(_exec_place).~Data();
-            }
+        if (place == _exec_place) {
+            this->data(_exec_place).destroy(reinterpret_cast<int64_t>(place));
+            this->data(_exec_place).~Data();
         }
     }
 
@@ -382,7 +391,9 @@ public:
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs,
                Arena*) const override {
-        this->data(_exec_place).merge(this->data(rhs), reinterpret_cast<int64_t>(place));
+        LOG(FATAL) << " shouldn't going merge function, there maybe some error about function "
+                   << _fn.name.function_name;
+        //this->data(_exec_place).merge(this->data(rhs), reinterpret_cast<int64_t>(place));
     }
 
     void serialize(ConstAggregateDataPtr __restrict place, BufferWritable& buf) const override {
@@ -394,12 +405,27 @@ public:
     // will call create --- deserialize --- merge --- destory for each rows ,
     // so need doing new (place), to create Data and read to buf, then call merge ,
     // and during destory about deserialize, because haven't done init_udaf,
-    // so it's can't call ~Data, only to change _destory_deserialize flag.
+    // so it's can't call ~Data
     void deserialize(AggregateDataPtr __restrict place, BufferReadable& buf,
                      Arena*) const override {
         new (place) Data(argument_types.size());
-        this->data(place).change_flag_to(const_cast<bool*>(&_destory_deserialize), true);
         this->data(place).read(buf);
+    }
+
+    void merge_single(size_t batch_size, AggregateDataPtr place, AggregateDataPtr rhs,
+                      size_t offset, Arena* arena) const override {
+        int64_t places_address[1];
+        places_address[0] = reinterpret_cast<int64_t>(place);
+        this->data(_exec_place).merge_bacth(places_address, rhs, offset, batch_size, true);
+    }
+
+    void merge_bacth(size_t batch_size, AggregateDataPtr* places, AggregateDataPtr rhs,size_t offset,
+                     Arena*) const override {
+        int64_t places_address[batch_size];
+        for (size_t i = 0; i < batch_size; ++i) {
+            places_address[i] = reinterpret_cast<int64_t>(places[i]);
+        }
+        this->data(_exec_place).merge_bacth(places_address, rhs, offset, batch_size, false);
     }
 
     void insert_result_into(ConstAggregateDataPtr __restrict place, IColumn& to) const override {
@@ -410,8 +436,6 @@ private:
     TFunction _fn;
     DataTypePtr _return_type;
     bool _first_created;
-    bool _destory_deserialize;
-    bool _destoryed_exec_place;
     AggregateDataPtr _exec_place;
 };
 

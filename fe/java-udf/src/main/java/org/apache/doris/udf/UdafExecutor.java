@@ -62,7 +62,8 @@ public class UdafExecutor {
     private final long inputBufferPtrs;
     private final long inputNullsPtrs;
     private final long inputOffsetsPtrs;
-    private final long inputPlacesPtr;
+    private final long inputAddPlacesPtr;
+    private final long inputMergePlacesPtr;
     private final long outputBufferPtr;
     private final long outputNullPtr;
     private final long outputOffsetsPtr;
@@ -92,7 +93,8 @@ public class UdafExecutor {
         inputBufferPtrs = request.input_buffer_ptrs;
         inputNullsPtrs = request.input_nulls_ptrs;
         inputOffsetsPtrs = request.input_offsets_ptrs;
-        inputPlacesPtr = request.input_places_ptr;
+        inputAddPlacesPtr = request.input_add_places_ptr;
+        inputMergePlacesPtr = request.input_merge_places_ptr;
 
         outputBufferPtr = request.output_buffer_ptr;
         outputNullPtr = request.output_null_ptr;
@@ -137,7 +139,8 @@ public class UdafExecutor {
         try {
             long idx = rowStart;
             do {
-                Long curPlace = UdfUtils.UNSAFE.getLong(null, UdfUtils.UNSAFE.getLong(null, inputPlacesPtr) + 8L * idx);
+                Long curPlace = UdfUtils.UNSAFE.getLong(null,
+                        UdfUtils.UNSAFE.getLong(null, inputAddPlacesPtr) + 8L * idx);
                 Object[] inputArgs = new Object[argTypes.length + 1];
                 if (!stateObjMap.containsKey(curPlace)) {
                     Object stateObj = create();
@@ -209,21 +212,28 @@ public class UdafExecutor {
      * invoke merge function and it's have done deserialze.
      * here call deserialize first, and call merge.
      */
-    public void merge(long place, byte[] data) throws UdfRuntimeException {
+    public void merge(Object[] data, long batch, boolean isSinglePlace) throws UdfRuntimeException {
         try {
-            Object[] args = new Object[2];
-            ByteArrayInputStream bins = new ByteArrayInputStream(data);
-            args[0] = create();
-            args[1] = new DataInputStream(bins);
-            allMethods.get(UDAF_DESERIALIZE_FUNCTION).invoke(udaf, args);
-            args[1] = args[0];
-            Long curPlace = place;
-            if (!stateObjMap.containsKey(curPlace)) {
-                Object stateObj = create();
-                stateObjMap.put(curPlace, stateObj);
-            }
-            args[0] = stateObjMap.get(curPlace);
-            allMethods.get(UDAF_MERGE_FUNCTION).invoke(udaf, args);
+            int idx = 0;
+            do {
+                Long curPlace = UdfUtils.UNSAFE.getLong(null,
+                        UdfUtils.UNSAFE.getLong(null, inputMergePlacesPtr) + 8L * idx);
+                do {
+                    Object[] args = new Object[2];
+                    ByteArrayInputStream bins = new ByteArrayInputStream((byte[]) data[idx]);
+                    args[0] = create();
+                    args[1] = new DataInputStream(bins);
+                    allMethods.get(UDAF_DESERIALIZE_FUNCTION).invoke(udaf, args);
+                    args[1] = args[0];
+                    if (!stateObjMap.containsKey(curPlace)) {
+                        Object stateObj = create();
+                        stateObjMap.put(curPlace, stateObj);
+                    }
+                    args[0] = stateObjMap.get(curPlace);
+                    allMethods.get(UDAF_MERGE_FUNCTION).invoke(udaf, args);
+                    idx++;
+                } while (isSinglePlace && idx < batch);
+            } while (idx < batch);
         } catch (Exception e) {
             throw new UdfRuntimeException("UDAF failed to merge: ", e);
         }

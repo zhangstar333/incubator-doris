@@ -130,6 +130,12 @@ public:
                                         AggregateDataPtr place, const IColumn** columns,
                                         Arena* arena) const = 0;
 
+    virtual void merge_bacth(size_t batch_size, AggregateDataPtr* places, AggregateDataPtr rhs,
+                             size_t offset, Arena* arena) const = 0;
+
+    virtual void merge_single(size_t batch_size, AggregateDataPtr place, AggregateDataPtr rhs,
+                              size_t offset, Arena* arena) const = 0;
+
     const DataTypes& get_argument_types() const { return argument_types; }
     const Array& get_parameters() const { return parameters; }
 
@@ -158,6 +164,21 @@ public:
             static_cast<const Derived*>(this)->add(place, columns, i, arena);
         }
     }
+
+    void merge_bacth(size_t batch_size, AggregateDataPtr* places, AggregateDataPtr rhs,
+                     size_t offset, Arena* arena) const override {
+        for (size_t i = 0; i < batch_size; ++i) {
+            static_cast<const Derived*>(this)->merge(places[i], rhs + (offset * i), arena);
+        }
+    }
+
+    void merge_single(size_t batch_size, AggregateDataPtr place, AggregateDataPtr rhs,
+                      size_t offset, Arena* arena) const override {
+        for (size_t i = 0; i < batch_size; ++i) {
+            static_cast<const Derived*>(this)->merge(place, rhs + (offset * i), arena);
+        }
+    }
+
     //now this is use for sum/count/avg/min/max win function, other win function should override this function in class
     //stddev_pop/stddev_samp/variance_pop/variance_samp/hll_union_agg/group_concat
     void add_range_single_place(int64_t partition_start, int64_t partition_end, int64_t frame_start,

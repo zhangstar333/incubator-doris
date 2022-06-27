@@ -10,7 +10,13 @@
 *.so.tmp
 *.flattened-pom.xml
 core.*
-
+output_copy/
+thirdparty/
+thirdparty_3_18/
+thirdparty_3_22/
+thirdparty_back2/
+tools/
+fs_brokers/
 # ignore file with specifiy name anywhere
 .DS_Store
 .classpath

@@ -380,7 +380,10 @@ struct TJavaUdfExecutorCtorParams {
   
   // this is used to pass place or places to FE, which could help us call jni
   // only once and can process a batch size data in JAVA-Udaf
-  11: optional i64 input_places_ptr
+  11: optional i64 input_add_places_ptr
+
+  // used to pass merge places in java-udaf
+  12: optional i64 input_merge_places_ptr
 }
 
 // Contains all interesting statistics from a single 'memory pool' in the JVM.
