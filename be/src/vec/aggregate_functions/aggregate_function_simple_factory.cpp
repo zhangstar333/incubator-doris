@@ -37,7 +37,8 @@ void register_aggregate_function_uniq(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_combinator_distinct(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_bitmap(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_window_rank(AggregateFunctionSimpleFactory& factory);
-void register_aggregate_function_window_lead_lag(AggregateFunctionSimpleFactory& factory);
+void register_aggregate_function_window_lead_lag_first_last(
+        AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_stddev_variance_pop(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_stddev_variance_samp(AggregateFunctionSimpleFactory& factory);
 void register_aggregate_function_topn(AggregateFunctionSimpleFactory& factory);
@@ -79,7 +80,7 @@ AggregateFunctionSimpleFactory& AggregateFunctionSimpleFactory::instance() {
 
         register_aggregate_function_stddev_variance_samp(instance);
         register_aggregate_function_replace_reader_load(instance);
-        register_aggregate_function_window_lead_lag(instance);
+        register_aggregate_function_window_lead_lag_first_last(instance);
         register_aggregate_function_HLL_union_agg(instance);
         register_aggregate_function_percentile_approx(instance);
     });

@@ -52,8 +52,9 @@ public class AggregateFunction extends Function {
             "orthogonal_bitmap_union_count", FunctionSet.COUNT, "approx_count_distinct", "ndv",
             FunctionSet.BITMAP_UNION_INT, FunctionSet.BITMAP_UNION_COUNT, "ndv_no_finalize", FunctionSet.WINDOW_FUNNEL);
 
-    public static ImmutableSet<String> ALWAYS_NULLABLE_AGGREGATE_FUNCTION_NAME_SET =
-            ImmutableSet.of("stddev_samp", "variance_samp", "var_samp", "percentile_approx");
+    public static ImmutableSet<String> ALWAYS_NULLABLE_AGGREGATE_FUNCTION_NAME_SET = ImmutableSet.of("stddev_samp",
+            "variance_samp", "var_samp", "percentile_approx", "first_value", "last_value");
+
 
     // Set if different from retType_, null otherwise.
     private Type intermediateType;

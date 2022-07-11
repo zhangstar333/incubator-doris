@@ -22,7 +22,7 @@
 #include "vec/aggregate_functions/aggregate_function_min_max.h"
 #include "vec/aggregate_functions/aggregate_function_simple_factory.h"
 #include "vec/aggregate_functions/aggregate_function_sum.h"
-#include "vec/aggregate_functions/aggregate_function_window.h"
+#include "vec/aggregate_functions/aggregate_function_reader_first_last.h"
 
 namespace doris::vectorized {
 
