@@ -548,6 +548,7 @@ struct TRepeatNode {
   4: required list<list<i64>> grouping_list
   // A list of all slot
   5: required set<Types.TSlotId> all_slot_ids
+  6: optional list<Exprs.TExpr> fnCallExprList
 }
 
 struct TPreAggregationNode {

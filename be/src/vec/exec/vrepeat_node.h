@@ -52,6 +52,8 @@ private:
     // _virtual_tuple_id id used for GROUPING_ID().
     TupleId _virtual_tuple_id;
     const TupleDescriptor* _virtual_tuple_desc;
+    std::vector<vectorized::VExprContext*> _vfn_ctxs;
+    TPlanNode tnode;
 };
 } // namespace vectorized
 } // namespace doris

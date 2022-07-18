@@ -39,6 +39,7 @@ import org.apache.doris.thrift.TRepeatNode;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -66,6 +67,7 @@ public class RepeatNode extends PlanNode {
     private GroupingInfo groupingInfo;
     private PlanNode input;
     private GroupByClause groupByClause;
+    private List<Expr> fnExprList;
 
     protected RepeatNode(PlanNodeId id, PlanNode input, GroupingInfo groupingInfo, GroupByClause groupByClause) {
         super(id, input.getTupleIds(), "REPEAT_NODE", StatisticalType.REPEAT_NODE);
@@ -142,7 +144,7 @@ public class RepeatNode extends PlanNode {
             }
         }
         outputTupleDesc.computeStatAndMemLayout();
-
+        fnExprList = Lists.newArrayList();
         List<Set<SlotId>> groupingIdList = new ArrayList<>();
         List<Expr> exprList = groupByClause.getGroupingExprs();
         Preconditions.checkState(exprList.size() >= 2);
@@ -163,6 +165,7 @@ public class RepeatNode extends PlanNode {
                         }
                     } else if (exprList.get(i) instanceof FunctionCallExpr) {
                         List<SlotRef> slotRefs = getSlotRefChildren(exprList.get(i));
+                        fnExprList.add(exprList.get(i));
                         for (SlotRef slotRef : slotRefs) {
                             if (bitSet.get(i) && slotRef.getSlotId() == slotId) {
                                 slotIdSet.add(slotId);
@@ -206,6 +209,8 @@ public class RepeatNode extends PlanNode {
         msg.node_type = TPlanNodeType.REPEAT_NODE;
         msg.repeat_node = new TRepeatNode(outputTupleDesc.getId().asInt(), repeatSlotIdList, groupingList.get(0),
                 groupingList, allSlotId);
+        LOG.info("fnExprList " + fnExprList.size());
+        msg.repeat_node.setFnCallExprList(Expr.treesToThrift(fnExprList));
     }
 
     @Override
