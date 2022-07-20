@@ -1,0 +1,64 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(gdb) Attach",
+            "type": "cppdbg",
+            "request": "attach",
+            "program": "/home/disk4/zhangstar/incubator-doris/output/be/lib/doris_be",
+            "processId": 61983,
+            "subProcess": true,
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "text": "set sysroot"
+                }
+            ],
+            "MIMode": "gdb",
+            "miDebuggerPath": "/home/disk4/zhangstar/baidu/bdg/doris/palo-toolchain/ldb_toolchain/bin/gdb"
+            // "miDebuggerPath": "/opt/compiler/gcc-10/bin/gdb"
+        },
+        {
+            "name": "(gdb) Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/home/disk4/zhangstar/incubator-doris/output/be/lib/doris_be",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "/home/disk4/zhangstar/incubator-doris/output/be",
+            "environment": [
+                {
+                    "name": "DORIS_HOME",
+                    "value": "/home/disk4/zhangstar/incubator-doris/output/be"
+                },
+                {
+                    "name": "UDF_RUNTIME_DIR",
+                    "value": "/home/disk4/zhangstar/incubator-doris/output/be/lib/udf-runtime"
+                },
+                {
+                    "name": "LOG_DIR",
+                    "value": "/home/disk4/zhangstar/incubator-doris/output/be/log"
+                },
+                {
+                    "name": "PID_DIR",
+                    "value": "/home/disk4/zhangstar/incubator-doris/output/be/bin"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}
+
+
