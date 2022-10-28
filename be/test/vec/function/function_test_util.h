@@ -292,8 +292,11 @@ Status check_function(const std::string& func_name, const InputTypeSet& input_ty
                     const auto& column_data = field.get<DecimalField<Decimal128>>().get_value();
                     EXPECT_EQ(expect_data.value, column_data.value) << " at row " << i;
                 } else if constexpr (std::is_same_v<ReturnType, DataTypeFloat32>) {
+                    const auto& column_data = field.get<DataTypeFloat32::FieldType>();
+                    EXPECT_FLOAT_EQ(expect_data, column_data) << " at row " << i;
+                } else if constexpr (std::is_same_v<ReturnType, DataTypeFloat64>) {
                     const auto& column_data = field.get<DataTypeFloat64::FieldType>();
-                    EXPECT_EQ(expect_data, column_data) << " at row " << i;
+                    EXPECT_DOUBLE_EQ(expect_data, column_data) << " at row " << i;
                 } else {
                     const auto& column_data = field.get<typename ReturnType::FieldType>();
                     EXPECT_EQ(expect_data, column_data) << " at row " << i;

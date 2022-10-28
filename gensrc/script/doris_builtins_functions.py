@@ -237,7 +237,7 @@ visible_functions = [
     [['array_difference'], 'ARRAY_BIGINT',    ['ARRAY_INT'], '', '', '', 'vec', ''],
     [['array_difference'], 'ARRAY_LARGEINT',  ['ARRAY_BIGINT'], '', '', '', 'vec', ''],
     [['array_difference'], 'ARRAY_LARGEINT',  ['ARRAY_LARGEINT'], '', '', '', 'vec', ''],
-    [['array_difference'], 'ARRAY_FLOAT',     ['ARRAY_FLOAT'], '', '', '', 'vec', ''],
+    [['array_difference'], 'ARRAY_DOUBLE',    ['ARRAY_FLOAT'], '', '', '', 'vec', ''],
     [['array_difference'], 'ARRAY_DOUBLE',    ['ARRAY_DOUBLE'], '', '', '', 'vec', ''],
     [['array_difference'], 'ARRAY_DECIMALV2', ['ARRAY_DECIMALV2'], '', '', '', 'vec', ''],
 
@@ -2184,9 +2184,14 @@ visible_functions = [
      [['extract_url_parameter'], 'VARCHAR', ['VARCHAR', 'VARCHAR'],'','', '', 'vec', ''],
 
     # runningdifference
-    [['running_difference'], 'INT', ['INT'],
-        '',
-        '', '', 'vec', 'ALWAYS_NOT_NULLABLE'],
+    [['running_difference'], 'SMALLINT', ['TINYINT'], '', '', '', 'vec', ''],
+    [['running_difference'], 'INT', ['SMALLINT'], '', '', '', 'vec', ''],
+    [['running_difference'], 'BIGINT', ['INT'], '', '', '', 'vec', ''],
+    [['running_difference'], 'LARGEINT', ['BIGINT'], '', '', '', 'vec', ''],
+    [['running_difference'], 'LARGEINT', ['LARGEINT'], '', '', '', 'vec', ''],
+    [['running_difference'], 'DOUBLE', ['FLOAT'], '', '', '', 'vec', ''],
+    [['running_difference'], 'DOUBLE', ['DOUBLE'], '', '', '', 'vec', ''],
+    [['running_difference'], 'DECIMALV2', ['DECIMALV2'], '', '', '', 'vec', ''],
 
     # Longtext function
     [['substr', 'substring'], 'STRING', ['STRING', 'INT'],
