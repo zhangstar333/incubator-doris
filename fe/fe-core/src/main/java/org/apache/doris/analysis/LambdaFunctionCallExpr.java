@@ -19,8 +19,8 @@ package org.apache.doris.analysis;
 
 import org.apache.doris.catalog.ArrayType;
 import org.apache.doris.catalog.Function;
-import org.apache.doris.catalog.Type;
 import org.apache.doris.catalog.Function.NullableMode;
+import org.apache.doris.catalog.Type;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.thrift.TExprNode;
 import org.apache.doris.thrift.TExprNodeType;
@@ -208,7 +208,7 @@ public class LambdaFunctionCallExpr extends FunctionCallExpr {
                 throw new AnalysisException(getFunctionNotFoundError(collectChildReturnTypes()));
             }
         }
-        LOG.info("fn string: " + fn.signatureString() + ". return type: " + fn.getReturnType());
+        LOG.debug("fn string: " + fn.signatureString() + ". return type: " + fn.getReturnType());
         if (fn == null) {
             LOG.warn("fn {} not exists", this.toSqlImpl());
             throw new AnalysisException(getFunctionNotFoundError(collectChildReturnTypes()));
