@@ -211,9 +211,9 @@ Status VPartitionSortNode::sink(RuntimeState* state, vectorized::Block* input_bl
             RETURN_IF_ERROR(sorter->prepare_for_read());
             _partition_sorts.push_back(std::move(sorter));
         }
-        if (state->enable_profile()) {
-            debug_profile();
-        }
+        // if (state->enable_profile()) {
+        //     debug_profile();
+        // }
         COUNTER_SET(_hash_table_size_counter, int64_t(_num_partition));
         _can_read = true;
     }
@@ -221,7 +221,6 @@ Status VPartitionSortNode::sink(RuntimeState* state, vectorized::Block* input_bl
 }
 
 Status VPartitionSortNode::open(RuntimeState* state) {
-    START_AND_SCOPE_SPAN(state->get_tracer(), span, "VPartitionSortNode::open");
     VLOG_CRITICAL << "VPartitionSortNode::open";
     SCOPED_TIMER(_runtime_profile->total_time_counter());
     RETURN_IF_ERROR(ExecNode::open(state));
@@ -230,14 +229,12 @@ Status VPartitionSortNode::open(RuntimeState* state) {
     bool eos = false;
     std::unique_ptr<Block> input_block = Block::create_unique();
     do {
-        RETURN_IF_ERROR_AND_CHECK_SPAN(
-                child(0)->get_next_after_projects(
-                        state, input_block.get(), &eos,
-                        std::bind((Status(ExecNode::*)(RuntimeState*, vectorized::Block*, bool*)) &
-                                          ExecNode::get_next,
-                                  _children[0], std::placeholders::_1, std::placeholders::_2,
-                                  std::placeholders::_3)),
-                child(0)->get_next_span(), eos);
+        RETURN_IF_ERROR(child(0)->get_next_after_projects(
+                state, input_block.get(), &eos,
+                std::bind((Status(ExecNode::*)(RuntimeState*, vectorized::Block*, bool*)) &
+                                  ExecNode::get_next,
+                          _children[0], std::placeholders::_1, std::placeholders::_2,
+                          std::placeholders::_3)));
         RETURN_IF_ERROR(sink(state, input_block.get(), eos));
     } while (!eos);
 
@@ -247,7 +244,6 @@ Status VPartitionSortNode::open(RuntimeState* state) {
 }
 
 Status VPartitionSortNode::alloc_resource(RuntimeState* state) {
-    START_AND_SCOPE_SPAN(state->get_tracer(), span, "VPartitionSortNode::open");
     SCOPED_TIMER(_runtime_profile->total_time_counter());
     RETURN_IF_ERROR(ExecNode::alloc_resource(state));
     RETURN_IF_ERROR(VExpr::open(_partition_expr_ctxs, state));
@@ -278,8 +274,7 @@ Status VPartitionSortNode::get_next(RuntimeState* state, Block* output_block, bo
     if (state == nullptr || output_block == nullptr || eos == nullptr) {
         return Status::InternalError("input is nullptr");
     }
-    INIT_AND_SCOPE_GET_NEXT_SPAN(state->get_tracer(), _get_next_span,
-                                 "VPartitionSortNode::get_next");
+
     VLOG_CRITICAL << "VPartitionSortNode::get_next";
     SCOPED_TIMER(_runtime_profile->total_time_counter());
 
