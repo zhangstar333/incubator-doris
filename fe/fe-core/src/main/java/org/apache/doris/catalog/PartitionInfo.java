@@ -109,6 +109,10 @@ public class PartitionInfo implements Writable {
         return type;
     }
 
+    public boolean isRangePartition() {
+        return type == PartitionType.RANGE || type == PartitionType.EXPR_RANGE;
+    }
+
     public List<Column> getPartitionColumns() {
         return partitionColumns;
     }
@@ -371,7 +375,7 @@ public class PartitionInfo implements Writable {
 
     public void readFields(DataInput in) throws IOException {
         type = PartitionType.valueOf(Text.readString(in));
-
+        LOG.info("readFields(DataInput in) 33333");
         int counter = in.readInt();
         for (int i = 0; i < counter; i++) {
             long partitionId = in.readLong();

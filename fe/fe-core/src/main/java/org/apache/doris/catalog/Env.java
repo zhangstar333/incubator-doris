@@ -2985,7 +2985,7 @@ public class Env {
             if (separatePartition) {
                 partitionId = Lists.newArrayList();
             }
-            if (!getBriefDdl && (partitionInfo.getType() == PartitionType.RANGE
+            if (!getBriefDdl && (partitionInfo.isRangePartition()
                     || partitionInfo.getType() == PartitionType.LIST)) {
                 sb.append("\n").append(partitionInfo.toSql(olapTable, partitionId));
             }

@@ -19,6 +19,7 @@ package org.apache.doris.planner;
 
 import org.apache.doris.analysis.Analyzer;
 import org.apache.doris.analysis.Expr;
+import org.apache.doris.analysis.ExpressionPartitionDesc;
 import org.apache.doris.analysis.SlotDescriptor;
 import org.apache.doris.analysis.TupleDescriptor;
 import org.apache.doris.catalog.Column;
@@ -130,8 +131,9 @@ public class OlapTableSink extends DataSink {
         tDataSink.setOlapTableSink(tSink);
 
         if (partitionIds == null) {
+            
             partitionIds = dstTable.getPartitionIds();
-            if (partitionIds.isEmpty()) {
+            if (partitionIds.isEmpty() && (dstTable.getPartitionInfo().getType() != PartitionType.EXPR_RANGE)) {
                 ErrorReport.reportAnalysisException(ErrorCode.ERR_EMPTY_PARTITION_IN_TABLE, dstTable.getName());
             }
         }
@@ -301,10 +303,14 @@ public class OlapTableSink extends DataSink {
         partitionParam.setVersion(0);
 
         PartitionType partType = table.getPartitionInfo().getType();
+        LOG.info("table.getPartitionInfo(): " + table.getPartitionInfo().toString());
         switch (partType) {
             case LIST:
-            case RANGE: {
+            case RANGE: 
+            case EXPR_RANGE: {
                 PartitionInfo partitionInfo = table.getPartitionInfo();
+                LOG.info("partitionInfo: " + partitionInfo.toString());
+                LOG.info("partitionIds: " + partitionIds.toString());
                 for (Column partCol : partitionInfo.getPartitionColumns()) {
                     partitionParam.addToPartitionColumns(partCol.getName());
                 }
@@ -325,6 +331,7 @@ public class OlapTableSink extends DataSink {
                         tPartition.setNumBuckets(index.getTablets().size());
                     }
                     tPartition.setIsMutable(table.getPartitionInfo().getIsMutable(partitionId));
+                    LOG.info("tPartition: " + tPartition.toString());
                     partitionParam.addToPartitions(tPartition);
 
                     DistributionInfo distInfo = partition.getDistributionInfo();
@@ -337,6 +344,10 @@ public class OlapTableSink extends DataSink {
                                     + selectedDistInfo.getType() + ", type2=" + distInfo.getType());
                         }
                     }
+                }
+                // for partition by function expr, there is no any partition firstly, But this is required in thrift struct.
+                if (partitionIds.isEmpty()) {
+                    partitionParam.setPartitions(new ArrayList<TOlapTablePartition>());
                 }
                 break;
             }
@@ -364,6 +375,7 @@ public class OlapTableSink extends DataSink {
                 throw new UserException("unsupported partition for OlapTable, partition=" + partType);
             }
         }
+        LOG.info("asdpartitionParampartitionParampartitionParam: " + partitionParam.toString());
         return partitionParam;
     }
 
@@ -432,6 +444,10 @@ public class OlapTableSink extends DataSink {
                     allBePathsMap.putAll(bePathsMap);
                 }
             }
+        }
+        // for partition by function expr, there is no any partition firstly, But this is required in thrift struct.
+        if (partitionIds.isEmpty()) {
+            locationParam.setTablets(new ArrayList<TTabletLocation>());
         }
 
         // check if disk capacity reach limit

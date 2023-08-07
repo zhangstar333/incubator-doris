@@ -250,7 +250,7 @@ public class PartitionsProcDir implements ProcDirInterface {
                 partitionInfo.add(TimeUtils.longToTimeString(partition.getVisibleVersionTime()));
                 partitionInfo.add(partition.getState());
 
-                if (tblPartitionInfo.getType() == PartitionType.RANGE
+                if (tblPartitionInfo.isRangePartition()
                         || tblPartitionInfo.getType() == PartitionType.LIST) {
                     List<Column> partitionColumns = tblPartitionInfo.getPartitionColumns();
                     List<String> colNames = new ArrayList<>();

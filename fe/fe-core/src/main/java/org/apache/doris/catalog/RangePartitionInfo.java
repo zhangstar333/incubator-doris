@@ -18,6 +18,7 @@
 package org.apache.doris.catalog;
 
 import org.apache.doris.analysis.AllPartitionDesc;
+import org.apache.doris.analysis.ExpressionPartitionDesc;
 import org.apache.doris.analysis.PartitionDesc;
 import org.apache.doris.analysis.PartitionKeyDesc;
 import org.apache.doris.analysis.RangePartitionDesc;
@@ -25,6 +26,9 @@ import org.apache.doris.analysis.SinglePartitionDesc;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.util.RangeUtils;
+import org.apache.doris.thrift.TStorageMedium;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
@@ -42,7 +46,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class RangePartitionInfo extends PartitionInfo {
-
+    private static final Logger LOG = LogManager.getLogger(RangePartitionInfo.class);
     public RangePartitionInfo() {
         // for persist
         super();
@@ -174,6 +178,33 @@ public class RangePartitionInfo extends PartitionInfo {
         return newRange;
     }
 
+    public Range<PartitionKey> getRange(long partitionId) {
+        // Range<PartitionKey> range = idToRange.get(partitionId);
+        // if (range == null) {
+        //     range = idToTempRange.get(partitionId);
+        // }
+        // return range;
+        return null;
+    }
+
+    public Range<PartitionKey> createAutomaticShadowPartition(long partitionId, ReplicaAllocation replicate) throws DdlException {
+         Range<PartitionKey> range = null;
+        try {
+            PartitionKey shadowPartitionKey = PartitionKey.createShadowPartitionKey(partitionColumns);
+            range = Range.closedOpen(shadowPartitionKey, shadowPartitionKey);
+            //  setRangeInternal(partitionId, false, range);
+        } catch (IllegalArgumentException e) {
+            // Range.closedOpen may throw this if (lower > upper)
+            throw new DdlException("Invalid key range: " + e.getMessage());
+        }
+        // idToDataProperty.put(partitionId, new DataProperty(TStorageMedium.HDD));
+        idToReplicaAllocation.put(partitionId, replicate);
+        idToInMemory.put(partitionId, false);
+        // idToStorageCacheInfo.put(partitionId, new StorageCacheInfo(true,
+        //          Config.lake_default_storage_cache_ttl_seconds, false));
+        return range;
+    }    
+
     public static void checkPartitionColumn(Column column) throws AnalysisException {
         PrimitiveType type = column.getDataType();
         if (!type.isFixedPointType() && !type.isDateType()) {
@@ -225,7 +256,7 @@ public class RangePartitionInfo extends PartitionInfo {
 
     public void readFields(DataInput in) throws IOException {
         super.readFields(in);
-
+        LOG.info("readFields(DataInput in) 22222");
         int counter = in.readInt();
         for (int i = 0; i < counter; i++) {
             Column column = Column.read(in);

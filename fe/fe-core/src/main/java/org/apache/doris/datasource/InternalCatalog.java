@@ -66,6 +66,7 @@ import org.apache.doris.catalog.DistributionInfo;
 import org.apache.doris.catalog.DistributionInfo.DistributionInfoType;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.EsTable;
+import org.apache.doris.catalog.ExpressionRangePartitionInfo;
 import org.apache.doris.catalog.HashDistributionInfo;
 import org.apache.doris.catalog.HiveTable;
 import org.apache.doris.catalog.IcebergTable;
@@ -1381,7 +1382,7 @@ public class InternalCatalog implements CatalogIf<Database> {
             olapTable.checkNormalStateForAlter();
             // check partition type
             PartitionInfo partitionInfo = olapTable.getPartitionInfo();
-            if (partitionInfo.getType() != PartitionType.RANGE && partitionInfo.getType() != PartitionType.LIST) {
+            if (partitionInfo.isRangePartition() == false && partitionInfo.getType() != PartitionType.LIST) {
                 throw new DdlException("Only support adding partition to range and list partitioned table");
             }
 
@@ -1601,7 +1602,7 @@ public class InternalCatalog implements CatalogIf<Database> {
 
                 // check partition type
                 PartitionInfo partitionInfo = olapTable.getPartitionInfo();
-                if (partitionInfo.getType() != PartitionType.RANGE && partitionInfo.getType() != PartitionType.LIST) {
+                if (partitionInfo.isRangePartition() == false && partitionInfo.getType() != PartitionType.LIST) {
                     throw new DdlException("Only support adding partition to range and list partitioned table");
                 }
 
@@ -1616,7 +1617,7 @@ public class InternalCatalog implements CatalogIf<Database> {
 
                 // log
                 PartitionPersistInfo info = null;
-                if (partitionInfo.getType() == PartitionType.RANGE) {
+                if (partitionInfo.isRangePartition()) {
                     info = new PartitionPersistInfo(db.getId(), olapTable.getId(), partition,
                             partitionInfo.getItem(partitionId).getItems(), ListPartitionItem.DUMMY_ITEM, dataProperty,
                             partitionInfo.getReplicaAllocation(partitionId), partitionInfo.getIsInMemory(partitionId),
@@ -1655,7 +1656,7 @@ public class InternalCatalog implements CatalogIf<Database> {
             }
 
             PartitionItem partitionItem = null;
-            if (partitionInfo.getType() == PartitionType.RANGE) {
+            if (partitionInfo.isRangePartition()) {
                 partitionItem = new RangePartitionItem(info.getRange());
             } else if (partitionInfo.getType() == PartitionType.LIST) {
                 partitionItem = info.getListPartitionItem();
@@ -1703,7 +1704,7 @@ public class InternalCatalog implements CatalogIf<Database> {
         }
 
         PartitionInfo partitionInfo = olapTable.getPartitionInfo();
-        if (partitionInfo.getType() != PartitionType.RANGE && partitionInfo.getType() != PartitionType.LIST) {
+        if (partitionInfo.isRangePartition() == false && partitionInfo.getType() != PartitionType.LIST) {
             throw new DdlException("Alter table [" + olapTable.getName() + "] failed. Not a partitioned table");
         }
 
@@ -1967,7 +1968,7 @@ public class InternalCatalog implements CatalogIf<Database> {
         }
 
         long bufferSize = IdGeneratorUtil.getBufferSizeForCreateTable(stmt, replicaAlloc);
-        IdGeneratorBuffer idGeneratorBuffer = Env.getCurrentEnv().getIdGeneratorBuffer(bufferSize);
+        IdGeneratorBuffer idGeneratorBuffer = Env.getCurrentEnv().getIdGeneratorBuffer(bufferSize + 3);
 
         // create partition info
         PartitionDesc partitionDesc = stmt.getPartitionDesc();
@@ -1980,6 +1981,20 @@ public class InternalCatalog implements CatalogIf<Database> {
                 partitionNameToId.put(desc.getPartitionName(), partitionId);
             }
             partitionInfo = partitionDesc.toPartitionInfo(baseSchema, partitionNameToId, false);
+            // if (partitionInfo instanceof ExpressionRangePartitionInfo) {
+            //     ExpressionRangePartitionInfo expressionRangePartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
+            //     long partitionId = idGeneratorBuffer.getNextId();
+            //     expressionRangePartitionInfo.createAutomaticShadowPartition(partitionId, replicaAlloc);
+            //     partitionNameToId.put(ExpressionRangePartitionInfo.AUTOMATIC_SHADOW_PARTITION_NAME, partitionId);
+            //                 DataProperty dataProperty = null;
+            //     try {
+            //         dataProperty = PropertyAnalyzer.analyzeDataProperty(stmt.getProperties(),
+            //                 new DataProperty(DataProperty.DEFAULT_STORAGE_MEDIUM));
+            //     } catch (AnalysisException e) {
+            //         throw new DdlException(e.getMessage());
+            //     }
+            //     expressionRangePartitionInfo.setDataProperty(partitionId, dataProperty);
+            // }
         } else {
             if (DynamicPartitionUtil.checkDynamicPartitionPropertiesExist(stmt.getProperties())) {
                 throw new DdlException("Only support dynamic partition properties on range partition table");
@@ -2424,14 +2439,14 @@ public class InternalCatalog implements CatalogIf<Database> {
                         storeRowColumn, isDynamicSchema, binlogConfigForTask,
                         partitionInfo.getDataProperty(partitionId).isStorageMediumSpecified());
                 olapTable.addPartition(partition);
-            } else if (partitionInfo.getType() == PartitionType.RANGE
+            } else if (partitionInfo.isRangePartition()
                     || partitionInfo.getType() == PartitionType.LIST) {
                 try {
                     // just for remove entries in stmt.getProperties(),
                     // and then check if there still has unknown properties
                     PropertyAnalyzer.analyzeDataProperty(stmt.getProperties(),
                             new DataProperty(DataProperty.DEFAULT_STORAGE_MEDIUM));
-                    if (partitionInfo.getType() == PartitionType.RANGE) {
+                    if (partitionInfo.isRangePartition()) {
                         DynamicPartitionUtil.checkAndSetDynamicPartitionProperty(olapTable, properties, db);
                     } else if (partitionInfo.getType() == PartitionType.LIST) {
                         if (DynamicPartitionUtil.checkDynamicPartitionPropertiesExist(properties)) {
