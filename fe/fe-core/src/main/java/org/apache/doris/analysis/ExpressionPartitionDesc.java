@@ -295,14 +295,28 @@ public class ExpressionPartitionDesc extends PartitionDesc {
             List<TPartitionByRange> partitionValues) throws AnalysisException {
         Map<String, AddPartitionClause> result = Maps.newHashMap();
         for (TPartitionByRange partitionValue : partitionValues) {
+            DateTimeFormatter beginDateTimeFormat;
+            LocalDateTime beginTime;
+            LocalDateTime endTime;
+
+            try {
+                beginDateTimeFormat = ExpressionPartitionDesc.probeFormat(partitionValue.start_key.date_literal.value);
+            } catch (AnalysisException e) {
+                throw new RuntimeException(e);
+            }
+            beginTime = ExpressionPartitionDesc.parseStringWithDefaultHSM(partitionValue.start_key.date_literal.value, beginDateTimeFormat);
+            endTime = ExpressionPartitionDesc.parseStringWithDefaultHSM(partitionValue.end_key.date_literal.value, beginDateTimeFormat);
+            String lowerBound = beginTime.format(ExpressionPartitionDesc.DATEKEY_FORMATTER);
+            String upperBound = endTime.format(ExpressionPartitionDesc.DATEKEY_FORMATTER);
+
             // maybe need check the range in FE also, like getAddPartitionClause.
-            PartitionValue lowerValue = new PartitionValue(partitionValue.start_key.date_literal.value);
-            PartitionValue upperValue = new PartitionValue(partitionValue.end_key.date_literal.value);
+            PartitionValue lowerValue = new PartitionValue(lowerBound);
+            PartitionValue upperValue = new PartitionValue(upperBound);
             PartitionKeyDesc partitionKeyDesc = PartitionKeyDesc.createFixed(
                     Collections.singletonList(lowerValue),
                     Collections.singletonList(upperValue));
 
-            String partitionName = "p" + partitionValue.start_key.date_literal.value;
+            String partitionName = "p" + lowerBound;
             Map<String, String> partitionProperties = Maps.newHashMap();
             // here need check
             Short replicationNum = olapTable.getTableProperty().getReplicaAllocation()

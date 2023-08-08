@@ -3098,7 +3098,7 @@ public class FrontendServiceImpl implements FrontendService.Iface {
             TOlapTablePartition tPartition = new TOlapTablePartition();
             tPartition.setId(partition.getId());
             RangePartitionInfo rangePartitionInfo = (RangePartitionInfo) olapTable.getPartitionInfo();
-            Range<PartitionKey> range = rangePartitionInfo.getRange(partition.getId());
+            Range<PartitionKey> range = partitionInfo.getItem(partition.getId()).getItems();
             int partColNum = rangePartitionInfo.getPartitionColumns().size();
             // set start keys
             if (range.hasLowerBound() && !range.lowerEndpoint().isMinValue()) {
