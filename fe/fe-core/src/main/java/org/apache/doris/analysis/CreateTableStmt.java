@@ -547,6 +547,7 @@ public class CreateTableStmt extends DdlStmt {
                     ExpressionPartitionDesc expressionPartitionDesc = (ExpressionPartitionDesc) partitionDesc;
                     try {
                         expressionPartitionDesc.analyze(columnDefs, properties);
+                        // expressionPartitionDesc.analyzeExpr(analyzer);
                     } catch (AnalysisException e) {
                         throw new AnalysisException("ExpressionPartitionDesc analyze error with: " + e.getMessage());
                     }

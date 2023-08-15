@@ -132,6 +132,10 @@ public class ExpressionPartitionDesc extends PartitionDesc {
         return rangePartitionDesc;
     }
 
+    public void analyzeExpr(Analyzer analyzer) throws AnalysisException {
+        expr.analyze(analyzer);
+    }
+
     public static SlotRef getSlotRefFromFunctionCallExpr(Expr expr) {
         if (expr instanceof FunctionCallExpr) {
             ArrayList<Expr> children = expr.getChildren();

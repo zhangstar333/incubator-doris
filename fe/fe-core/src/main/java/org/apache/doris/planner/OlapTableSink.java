@@ -25,6 +25,7 @@ import org.apache.doris.analysis.TupleDescriptor;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.DistributionInfo;
 import org.apache.doris.catalog.Env;
+import org.apache.doris.catalog.ExpressionRangePartitionInfo;
 import org.apache.doris.catalog.HashDistributionInfo;
 import org.apache.doris.catalog.Index;
 import org.apache.doris.catalog.ListPartitionItem;
@@ -180,7 +181,7 @@ public class OlapTableSink extends DataSink {
         tSink.setNumReplicas(numReplicas);
         tSink.setNeedGenRollup(dstTable.shouldLoadToNewRollup());
         tSink.setSchema(createSchema(tSink.getDbId(), dstTable, analyzer));
-        tSink.setPartition(createPartition(tSink.getDbId(), dstTable));
+        tSink.setPartition(createPartition(tSink.getDbId(), dstTable, analyzer));
         List<TOlapTableLocationParam> locationParams = createLocation(dstTable);
         tSink.setLocation(locationParams.get(0));
         if (singleReplicaLoad) {
@@ -296,7 +297,7 @@ public class OlapTableSink extends DataSink {
         return distColumns;
     }
 
-    private TOlapTablePartitionParam createPartition(long dbId, OlapTable table) throws UserException {
+    private TOlapTablePartitionParam createPartition(long dbId, OlapTable table, Analyzer analyzer) throws UserException {
         TOlapTablePartitionParam partitionParam = new TOlapTablePartitionParam();
         partitionParam.setDbId(dbId);
         partitionParam.setTableId(table.getId());
@@ -348,6 +349,21 @@ public class OlapTableSink extends DataSink {
                 // for partition by function expr, there is no any partition firstly, But this is required in thrift struct.
                 if (partitionIds.isEmpty()) {
                     partitionParam.setPartitions(new ArrayList<TOlapTablePartition>());
+                }
+                if (partitionInfo instanceof ExpressionRangePartitionInfo) {
+                    ExpressionRangePartitionInfo exprPartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
+                    List<Expr> exprs = exprPartitionInfo.getPartitionExprs();
+                    if (analyzer != null) {
+                        tupleDescriptor.setTable(table);
+                        analyzer.registerTupleDescriptor(tupleDescriptor);
+                        for(Expr e : exprs) {
+                            e.analyze(analyzer);
+                        }
+                    }
+                    partitionParam.setPartitionFunctionExprs(Expr.treesToThrift(exprs));
+                    partitionParam.setEnableAutomaticPartition(true);
+                } else {
+                    partitionParam.setEnableAutomaticPartition(false);
                 }
                 break;
             }
