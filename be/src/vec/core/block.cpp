@@ -757,7 +757,8 @@ Block Block::copy_block(const std::vector<int>& column_offset) const {
     return columns_with_type_and_name;
 }
 
-void Block::append_block_by_selector(MutableBlock* dst, const IColumn::Selector& selector) const {
+void Block::append_to_block_by_selector(MutableBlock* dst,
+                                        const IColumn::Selector& selector) const {
     DCHECK_EQ(data.size(), dst->mutable_columns().size());
     for (size_t i = 0; i < data.size(); i++) {
         data[i].column->append_data_by_selector(dst->mutable_columns()[i], selector);

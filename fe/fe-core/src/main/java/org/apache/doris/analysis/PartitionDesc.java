@@ -32,6 +32,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang3.NotImplementedException;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,7 +40,8 @@ import java.util.Set;
 public class PartitionDesc {
     protected List<String> partitionColNames;
     protected List<SinglePartitionDesc> singlePartitionDescs;
-
+    protected ArrayList<Expr> partitionExprs; //eg: auto partition by range date_trunc(column, 'day')
+    protected boolean isAutoCreatePartitions;
     protected PartitionType type;
 
     public PartitionDesc() {}
@@ -47,6 +49,11 @@ public class PartitionDesc {
     public PartitionDesc(List<String> partitionColNames,
                          List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
         this.partitionColNames = partitionColNames;
+        this.singlePartitionDescs = handleAllPartitionDesc(allPartitionDescs);
+    }
+
+    public List<SinglePartitionDesc> handleAllPartitionDesc(List<AllPartitionDesc> allPartitionDescs)
+            throws AnalysisException {
         boolean isMultiPartition = false;
         List<SinglePartitionDesc> tmpList = Lists.newArrayList();
         if (allPartitionDescs != null) {
@@ -65,7 +72,7 @@ public class PartitionDesc {
             throw new AnalysisException("multi partition column size except 1 but provided "
                     + partitionColNames.size() + ".");
         }
-        this.singlePartitionDescs = tmpList;
+        return tmpList;
     }
 
     public List<SinglePartitionDesc> getSinglePartitionDescs() {
@@ -83,6 +90,33 @@ public class PartitionDesc {
 
     public List<String> getPartitionColNames() {
         return partitionColNames;
+    }
+
+    public static List<String> getColNamesFromExpr(ArrayList<Expr> exprs) throws AnalysisException {
+        List<String> colNames = new ArrayList<>();
+        for (Expr expr : exprs) {
+            if (expr instanceof FunctionCallExpr) {
+                FunctionCallExpr functionCallExpr = (FunctionCallExpr) expr;
+                List<Expr> paramsExpr = functionCallExpr.getParams().exprs();
+                for (Expr param : paramsExpr) {
+                    if (param instanceof SlotRef) {
+                        colNames.add(((SlotRef) param).getColumnName());
+                    }
+                }
+            } else if (expr instanceof SlotRef) {
+                colNames.add(((SlotRef) expr).getColumnName());
+            } else {
+                throw new AnalysisException(
+                        "auto create partition only support function call expr"
+                                + expr.toSql());
+            }
+        }
+        if (colNames.isEmpty()) {
+            throw new AnalysisException(
+                    "auto create partition have not find any partition columns"
+                            + exprs.get(0).toSql());
+        }
+        return colNames;
     }
 
     public void analyze(List<ColumnDef> columnDefs, Map<String, String> otherProperties) throws AnalysisException {

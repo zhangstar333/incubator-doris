@@ -35,6 +35,8 @@
 #include "vec/columns/column.h"
 #include "vec/core/block.h"
 #include "vec/core/column_with_type_and_name.h"
+#include "vec/exprs/vexpr.h"
+#include "vec/exprs/vexpr_context.h"
 #include "vec/exprs/vexpr_fwd.h"
 
 namespace doris {
@@ -174,6 +176,20 @@ public:
 
     const std::vector<VOlapTablePartition*>& get_partitions() const { return _partitions; }
 
+    bool is_auto_partition() const { return _is_auto_partiton; }
+
+    std::vector<uint16_t> get_partition_keys() const { return _partition_slot_locs; }
+
+    Status add_partitions(const std::vector<TOlapTablePartition>& partitions);
+
+    //TODO: use vector when we support multi partition column for auto-partition
+    vectorized::VExprContextSPtr get_part_func_ctx() { return _part_func_ctx; }
+    vectorized::VExprSPtr get_partition_function() { return _partition_function; }
+
+    // which will affect _partition_block
+    Status generate_partition_from(const TOlapTablePartition& t_part,
+                                   VOlapTablePartition*& part_result);
+
 private:
     Status _create_partition_keys(const std::vector<TExprNode>& t_exprs, BlockRow* part_key);
 
@@ -207,8 +223,15 @@ private:
     uint32_t _mem_usage = 0;
     // only works when using list partition, the resource is owned by _partitions
     VOlapTablePartition* _default_partition = nullptr;
+
+    // for auto partition, now only support 1 column. TODO: use vector to save them when we support multi column auto-partition.
+    bool _is_auto_partiton = false;
+    vectorized::VExprContextSPtr _part_func_ctx;
+    vectorized::VExprSPtr _partition_function;
+    TPartitionType::type _part_type; // support list or range
 };
 
+// indicate where's the tablet and all its replications (node-wise)
 using TabletLocation = TTabletLocation;
 // struct TTabletLocation {
 //     1: required i64 tablet_id
@@ -235,9 +258,17 @@ public:
         return nullptr;
     }
 
+    void add_locations(std::vector<TTabletLocation>& locations) {
+        for (auto& location : locations) {
+            if (_tablets.find(location.tablet_id) == _tablets.end()) {
+                _tablets[location.tablet_id] = &location;
+            }
+        }
+    }
+
 private:
     TOlapTableLocationParam _t_param;
-
+    // [tablet_id, tablet]. tablet has id, also.
     std::unordered_map<int64_t, TabletLocation*> _tablets;
 };
 
@@ -276,6 +307,15 @@ public:
             return &it->second;
         }
         return nullptr;
+    }
+
+    void add_nodes(const std::vector<TNodeInfo>& t_nodes) {
+        for (const auto& node : t_nodes) {
+            auto node_info = find_node(node.id);
+            if (node_info == nullptr) {
+                _nodes.emplace(node.id, node);
+            }
+        }
     }
 
     const std::unordered_map<int64_t, NodeInfo>& nodes_info() { return _nodes; }
