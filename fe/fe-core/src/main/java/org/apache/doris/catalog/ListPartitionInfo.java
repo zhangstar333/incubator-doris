@@ -18,6 +18,7 @@
 package org.apache.doris.catalog;
 
 import org.apache.doris.analysis.AllPartitionDesc;
+import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.ListPartitionDesc;
 import org.apache.doris.analysis.PartitionDesc;
 import org.apache.doris.analysis.PartitionKeyDesc;
@@ -52,6 +53,13 @@ public class ListPartitionInfo extends PartitionInfo {
         super(PartitionType.LIST);
         this.partitionColumns = partitionColumns;
         this.isMultiColumnPartition = partitionColumns.size() > 1;
+    }
+
+    public ListPartitionInfo(List<Expr> exprs, List<Column> partitionColumns) {
+        super(PartitionType.LIST, partitionColumns);
+        if (exprs != null) {
+            this.partitionExprs.addAll(exprs);
+        }
     }
 
     public static PartitionInfo read(DataInput in) throws IOException {
@@ -269,6 +277,6 @@ public class ListPartitionInfo extends PartitionInfo {
 
             allPartitionDescs.add(new SinglePartitionDesc(false, partitionName, partitionKeyDesc, properties));
         }
-        return new ListPartitionDesc(partitionColumnNames, allPartitionDescs);
+        return new ListPartitionDesc(this.partitionExprs, partitionColumnNames, allPartitionDescs);
     }
 }

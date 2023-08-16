@@ -166,9 +166,9 @@ else
         case "$1" in
         --fe)
             BUILD_FE=1
-            BUILD_SPARK_DPP=1
-            BUILD_HIVE_UDF=1
-            BUILD_BE_JAVA_EXTENSIONS=1
+            BUILD_SPARK_DPP=0
+            BUILD_HIVE_UDF=0
+            BUILD_BE_JAVA_EXTENSIONS=0
             shift
             ;;
         --be)

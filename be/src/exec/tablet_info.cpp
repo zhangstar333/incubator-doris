@@ -271,8 +271,8 @@ Status VOlapTablePartitionParam::init() {
         };
     }
 
-    DCHECK(!_t_param.partitions.empty()) << "must have at least 1 partition";
-    _is_in_partition = _t_param.partitions[0].__isset.in_keys;
+    // DCHECK(!_t_param.partitions.empty()) << "must have at least 1 partition";
+    // _is_in_partition = _t_param.partitions[0].__isset.in_keys;
 
     // initial partitions
     for (int i = 0; i < _t_param.partitions.size(); ++i) {

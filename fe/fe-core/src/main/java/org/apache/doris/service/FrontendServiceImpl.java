@@ -19,10 +19,12 @@ package org.apache.doris.service;
 
 import org.apache.doris.alter.SchemaChangeHandler;
 import org.apache.doris.analysis.AddColumnsClause;
+import org.apache.doris.analysis.AddPartitionClause;
 import org.apache.doris.analysis.Analyzer;
 import org.apache.doris.analysis.ColumnDef;
 import org.apache.doris.analysis.InsertStmt;
 import org.apache.doris.analysis.LabelName;
+import org.apache.doris.analysis.PartitionExprUtil;
 import org.apache.doris.analysis.RestoreStmt;
 import org.apache.doris.analysis.SetType;
 import org.apache.doris.analysis.SqlParser;
@@ -38,7 +40,12 @@ import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.DatabaseIf;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.Index;
+import org.apache.doris.catalog.MaterializedIndex;
 import org.apache.doris.catalog.OlapTable;
+import org.apache.doris.catalog.Partition;
+import org.apache.doris.catalog.PartitionInfo;
+import org.apache.doris.catalog.PartitionKey;
+import org.apache.doris.catalog.RangePartitionInfo;
 import org.apache.doris.catalog.Replica;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.TableIf;
@@ -51,6 +58,7 @@ import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.AuthenticationException;
 import org.apache.doris.common.CaseSensibility;
 import org.apache.doris.common.Config;
+import org.apache.doris.common.DdlException;
 import org.apache.doris.common.DuplicatedRequestException;
 import org.apache.doris.common.LabelAlreadyUsedException;
 import org.apache.doris.common.MetaNotFoundException;
@@ -76,6 +84,7 @@ import org.apache.doris.master.MasterImpl;
 import org.apache.doris.mysql.privilege.AccessControllerManager;
 import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.persist.gson.GsonUtils;
+import org.apache.doris.planner.OlapTableSink;
 import org.apache.doris.planner.StreamLoadPlanner;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.ConnectProcessor;
@@ -97,103 +106,7 @@ import org.apache.doris.system.SystemInfoService;
 import org.apache.doris.tablefunction.MetadataGenerator;
 import org.apache.doris.task.LoadEtlTask;
 import org.apache.doris.task.StreamLoadTask;
-import org.apache.doris.thrift.FrontendService;
-import org.apache.doris.thrift.FrontendServiceVersion;
-import org.apache.doris.thrift.TAddColumnsRequest;
-import org.apache.doris.thrift.TAddColumnsResult;
-import org.apache.doris.thrift.TAutoIncrementRangeRequest;
-import org.apache.doris.thrift.TAutoIncrementRangeResult;
-import org.apache.doris.thrift.TBeginTxnRequest;
-import org.apache.doris.thrift.TBeginTxnResult;
-import org.apache.doris.thrift.TBinlog;
-import org.apache.doris.thrift.TCheckAuthRequest;
-import org.apache.doris.thrift.TCheckAuthResult;
-import org.apache.doris.thrift.TColumn;
-import org.apache.doris.thrift.TColumnDef;
-import org.apache.doris.thrift.TColumnDesc;
-import org.apache.doris.thrift.TCommitTxnRequest;
-import org.apache.doris.thrift.TCommitTxnResult;
-import org.apache.doris.thrift.TConfirmUnusedRemoteFilesRequest;
-import org.apache.doris.thrift.TConfirmUnusedRemoteFilesResult;
-import org.apache.doris.thrift.TDescribeTableParams;
-import org.apache.doris.thrift.TDescribeTableResult;
-import org.apache.doris.thrift.TDescribeTablesParams;
-import org.apache.doris.thrift.TDescribeTablesResult;
-import org.apache.doris.thrift.TExecPlanFragmentParams;
-import org.apache.doris.thrift.TFeResult;
-import org.apache.doris.thrift.TFetchResourceResult;
-import org.apache.doris.thrift.TFetchSchemaTableDataRequest;
-import org.apache.doris.thrift.TFetchSchemaTableDataResult;
-import org.apache.doris.thrift.TFinishTaskRequest;
-import org.apache.doris.thrift.TFrontendPingFrontendRequest;
-import org.apache.doris.thrift.TFrontendPingFrontendResult;
-import org.apache.doris.thrift.TFrontendPingFrontendStatusCode;
-import org.apache.doris.thrift.TGetBinlogLagResult;
-import org.apache.doris.thrift.TGetBinlogRequest;
-import org.apache.doris.thrift.TGetBinlogResult;
-import org.apache.doris.thrift.TGetDbsParams;
-import org.apache.doris.thrift.TGetDbsResult;
-import org.apache.doris.thrift.TGetMasterTokenRequest;
-import org.apache.doris.thrift.TGetMasterTokenResult;
-import org.apache.doris.thrift.TGetQueryStatsRequest;
-import org.apache.doris.thrift.TGetSnapshotRequest;
-import org.apache.doris.thrift.TGetSnapshotResult;
-import org.apache.doris.thrift.TGetTablesParams;
-import org.apache.doris.thrift.TGetTablesResult;
-import org.apache.doris.thrift.TGetTabletReplicaInfosRequest;
-import org.apache.doris.thrift.TGetTabletReplicaInfosResult;
-import org.apache.doris.thrift.TInitExternalCtlMetaRequest;
-import org.apache.doris.thrift.TInitExternalCtlMetaResult;
-import org.apache.doris.thrift.TListPrivilegesResult;
-import org.apache.doris.thrift.TListTableStatusResult;
-import org.apache.doris.thrift.TLoadTxn2PCRequest;
-import org.apache.doris.thrift.TLoadTxn2PCResult;
-import org.apache.doris.thrift.TLoadTxnBeginRequest;
-import org.apache.doris.thrift.TLoadTxnBeginResult;
-import org.apache.doris.thrift.TLoadTxnCommitRequest;
-import org.apache.doris.thrift.TLoadTxnCommitResult;
-import org.apache.doris.thrift.TLoadTxnRollbackRequest;
-import org.apache.doris.thrift.TLoadTxnRollbackResult;
-import org.apache.doris.thrift.TMasterOpRequest;
-import org.apache.doris.thrift.TMasterOpResult;
-import org.apache.doris.thrift.TMasterResult;
-import org.apache.doris.thrift.TMySqlLoadAcquireTokenResult;
-import org.apache.doris.thrift.TNetworkAddress;
-import org.apache.doris.thrift.TPipelineFragmentParams;
-import org.apache.doris.thrift.TPrivilegeCtrl;
-import org.apache.doris.thrift.TPrivilegeHier;
-import org.apache.doris.thrift.TPrivilegeStatus;
-import org.apache.doris.thrift.TPrivilegeType;
-import org.apache.doris.thrift.TQueryOptions;
-import org.apache.doris.thrift.TQueryStatsResult;
-import org.apache.doris.thrift.TQueryType;
-import org.apache.doris.thrift.TReplicaInfo;
-import org.apache.doris.thrift.TReportExecStatusParams;
-import org.apache.doris.thrift.TReportExecStatusResult;
-import org.apache.doris.thrift.TReportRequest;
-import org.apache.doris.thrift.TRestoreSnapshotRequest;
-import org.apache.doris.thrift.TRestoreSnapshotResult;
-import org.apache.doris.thrift.TRollbackTxnRequest;
-import org.apache.doris.thrift.TRollbackTxnResult;
-import org.apache.doris.thrift.TShowVariableRequest;
-import org.apache.doris.thrift.TShowVariableResult;
-import org.apache.doris.thrift.TSnapshotLoaderReportRequest;
-import org.apache.doris.thrift.TSnapshotType;
-import org.apache.doris.thrift.TStatus;
-import org.apache.doris.thrift.TStatusCode;
-import org.apache.doris.thrift.TStreamLoadMultiTablePutResult;
-import org.apache.doris.thrift.TStreamLoadPutRequest;
-import org.apache.doris.thrift.TStreamLoadPutResult;
-import org.apache.doris.thrift.TStreamLoadWithLoadStatusRequest;
-import org.apache.doris.thrift.TStreamLoadWithLoadStatusResult;
-import org.apache.doris.thrift.TTableIndexQueryStats;
-import org.apache.doris.thrift.TTableQueryStats;
-import org.apache.doris.thrift.TTableStatus;
-import org.apache.doris.thrift.TUniqueId;
-import org.apache.doris.thrift.TUpdateExportTaskStatusRequest;
-import org.apache.doris.thrift.TUpdateFollowerStatsCacheRequest;
-import org.apache.doris.thrift.TWaitingTxnStatusRequest;
-import org.apache.doris.thrift.TWaitingTxnStatusResult;
+import org.apache.doris.thrift.*;
 import org.apache.doris.transaction.DatabaseTransactionMgr;
 import org.apache.doris.transaction.TabletCommitInfo;
 import org.apache.doris.transaction.TransactionState;
@@ -206,6 +119,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Range;
+
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -2953,5 +2869,126 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         }
         // Return Ok anyway
         return new TStatus(TStatusCode.OK);
+    }
+
+    @Override
+    public TCreatePartitionResult createPartition(TCreatePartitionRequest request) throws TException {
+        LOG.info("Receive create partition request: {}", request);
+        long dbId = request.getDbId();
+        long tableId = request.getTableId();
+        TCreatePartitionResult result = new TCreatePartitionResult();
+        TStatus errorStatus = new TStatus(TStatusCode.RUNTIME_ERROR);
+
+        Database db = Env.getCurrentEnv().getInternalCatalog().getDbNullable(dbId);
+        if (db == null) {
+            errorStatus.setErrorMsgs(Lists.newArrayList(String.format("dbId=%d is not exists", dbId)));
+            result.setStatus(errorStatus);
+            return result;
+        }
+
+        Table table = db.getTable(tableId).get();
+        if (table == null) {
+            errorStatus.setErrorMsgs(
+                    (Lists.newArrayList(String.format("dbId=%d tableId=%d is not exists", dbId, tableId))));
+            result.setStatus(errorStatus);
+            return result;
+        }
+        
+        if (!(table instanceof OlapTable)) {
+            errorStatus.setErrorMsgs(
+                    Lists.newArrayList(String.format("dbId=%d tableId=%d is not olap table", dbId, tableId)));
+            result.setStatus(errorStatus);
+            return result;
+        }
+
+        if (request.partitionValues == null) {
+            errorStatus.setErrorMsgs(Lists.newArrayList("partitionValues should not null."));
+            result.setStatus(errorStatus);
+            return result;
+        }
+
+        if (request.partitionValues.size() != 1) {
+            errorStatus.setErrorMsgs(
+                    Lists.newArrayList("only support single partition, partitionValues size should equal 1."));
+            result.setStatus(errorStatus);
+            return result;
+        }
+
+        OlapTable olapTable = (OlapTable) table;
+        PartitionInfo partitionInfo = olapTable.getPartitionInfo(); 
+        List<TPartitionByRange> partitionValues = request.partitionValues.get(0);
+        Map<String, AddPartitionClause> addPartitionClauseMap;
+
+        try {
+            addPartitionClauseMap = PartitionExprUtil.getAddPartitionClauseFromPartitionValues(olapTable,
+                    partitionValues, partitionInfo.getType());
+        } catch (AnalysisException ex) {
+            errorStatus.setErrorMsgs(Lists.newArrayList(ex.getMessage()));
+            result.setStatus(errorStatus);
+            return result;
+        }
+
+        for (AddPartitionClause addPartitionClause : addPartitionClauseMap.values()) {
+            try {
+                // here maybe check and limit created partitions num
+                Env.getCurrentEnv().addPartition(db, olapTable.getName(), addPartitionClause);
+            } catch (DdlException e) {
+                LOG.warn(e);
+                errorStatus.setErrorMsgs(
+                        Lists.newArrayList(String.format("create partition failed. error:%s", e.getMessage())));
+                result.setStatus(errorStatus);
+                return result;
+            }
+        }
+    
+        // build partition & tablets
+        List<TOlapTablePartition> partitions = Lists.newArrayList();
+        List<TTabletLocation> tablets = Lists.newArrayList();
+        for (String partitionName : addPartitionClauseMap.keySet()) {
+            Partition partition = table.getPartition(partitionName);
+            TOlapTablePartition tPartition = new TOlapTablePartition();
+            tPartition.setId(partition.getId());
+            int partColNum = partitionInfo.getPartitionColumns().size();
+            // set partition keys
+            OlapTableSink.setPartitionKeys(tPartition, partitionInfo.getItem(partition.getId()), partColNum);
+            for (MaterializedIndex index : partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
+                tPartition.addToIndexes(new TOlapTableIndexTablets(index.getId(), Lists.newArrayList(
+                        index.getTablets().stream().map(Tablet::getId).collect(Collectors.toList()))));
+                tPartition.setNumBuckets(index.getTablets().size());
+            }
+            tPartition.setIsMutable(olapTable.getPartitionInfo().getIsMutable(partition.getId()));
+            partitions.add(tPartition);
+            // tablet
+            int quorum = olapTable.getPartitionInfo().getReplicaAllocation(partition.getId()).getTotalReplicaNum() / 2
+                    + 1;
+            for (MaterializedIndex index : partition.getMaterializedIndices(MaterializedIndex.IndexExtState.ALL)) {
+                for (Tablet tablet : index.getTablets()) {
+                    // we should ensure the replica backend is alive
+                    // otherwise, there will be a 'unknown node id, id=xxx' error for stream load
+                    // BE id -> path hash
+                    Multimap<Long, Long> bePathsMap = tablet.getNormalReplicaBackendPathMap();
+                    if (bePathsMap.keySet().size() < quorum) {
+                        LOG.warn("auto go quorum exception");
+                    }
+                    // replicas[0] will be the primary replica
+                    List<Long> replicas = Lists.newArrayList(bePathsMap.keySet());
+                    Collections.shuffle(replicas);
+                    tablets.add(new TTabletLocation(tablet.getId(), Lists.newArrayList(bePathsMap.keySet())));
+                }
+            }
+        }
+        result.setPartitions(partitions);
+        result.setTablets(tablets);
+
+        // build nodes
+        List<TNodeInfo> nodeInfos = Lists.newArrayList();
+        SystemInfoService systemInfoService = Env.getCurrentSystemInfo();
+        for (Long id : systemInfoService.getAllBackendIds(false)) {
+            Backend backend = systemInfoService.getBackend(id);
+            nodeInfos.add(new TNodeInfo(backend.getId(), 0, backend.getHost(), backend.getBrpcPort()));
+        }
+        result.setNodes(nodeInfos);
+        result.setStatus(new TStatus(TStatusCode.OK));
+        return result;
     }
 }

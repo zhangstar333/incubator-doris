@@ -18,6 +18,7 @@
 package org.apache.doris.catalog;
 
 import org.apache.doris.analysis.AllPartitionDesc;
+import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.PartitionDesc;
 import org.apache.doris.analysis.PartitionKeyDesc;
 import org.apache.doris.analysis.RangePartitionDesc;
@@ -52,6 +53,13 @@ public class RangePartitionInfo extends PartitionInfo {
         super(PartitionType.RANGE);
         this.partitionColumns = partitionColumns;
         this.isMultiColumnPartition = partitionColumns.size() > 1;
+    }
+
+    public RangePartitionInfo(List<Expr> exprs, List<Column> partitionColumns) {
+        super(PartitionType.RANGE, partitionColumns);
+        if (exprs != null) {
+            this.partitionExprs.addAll(exprs);
+        }
     }
 
     @Override
@@ -325,6 +333,6 @@ public class RangePartitionInfo extends PartitionInfo {
 
             allPartitionDescs.add(new SinglePartitionDesc(false, partitionName, partitionKeyDesc, properties));
         }
-        return new RangePartitionDesc(partitionColumnNames, allPartitionDescs);
+        return new RangePartitionDesc(this.partitionExprs, partitionColumnNames, allPartitionDescs);
     }
 }
