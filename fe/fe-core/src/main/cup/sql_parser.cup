@@ -3228,6 +3228,18 @@ opt_partition ::=
     {:
         RESULT = new ListPartitionDesc(columns, list);
     :}
+    /* expr range partition */
+    | KW_PARTITION KW_BY KW_RANGE function_call_expr:fnExpr
+            LPAREN opt_all_partition_desc_list:list RPAREN
+    {:
+        RESULT = new RangePartitionDesc(fnExpr, list);
+    :}
+    /* expr list partition */
+    | KW_PARTITION KW_BY  KW_LIST function_call_expr:fnExpr
+            LPAREN opt_all_partition_desc_list:list RPAREN
+    {:
+        RESULT = new ListPartitionDesc(fnExpr, list);
+    :}
     ;
 
 opt_distribution ::=

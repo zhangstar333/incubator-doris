@@ -37,6 +37,23 @@ public class RangePartitionDesc extends PartitionDesc {
         type = org.apache.doris.catalog.PartitionType.RANGE;
     }
 
+    public RangePartitionDesc(Expr expr, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+        this.partitionExprs = new ArrayList<>();
+        this.partitionExprs.add(expr);
+        this.partitionColNames = getColNamesFromExpr(expr);
+        this.singlePartitionDescs = handleAllPartitionDesc(allPartitionDescs);
+        this.type = org.apache.doris.catalog.PartitionType.RANGE;
+    }
+
+    public RangePartitionDesc(List<Expr> exprs, List<String> partitionColNames, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+        if (exprs != null) {
+            this.partitionExprs = exprs;
+        }
+        this.partitionColNames = partitionColNames;
+        this.singlePartitionDescs = handleAllPartitionDesc(allPartitionDescs);
+        this.type = org.apache.doris.catalog.PartitionType.RANGE;
+    }
+
     @Override
     public void checkPartitionKeyValueType(PartitionKeyDesc partitionKeyDesc) throws AnalysisException {
         if (partitionKeyDesc.getPartitionType() != PartitionKeyValueType.FIXED
@@ -116,7 +133,7 @@ public class RangePartitionDesc extends PartitionDesc {
          * [ {10,  100, 1000},    {50,  500, MIN } )
          * [ {50,  500, MIN },    {80,  MIN, MIN } )
          */
-        RangePartitionInfo rangePartitionInfo = new RangePartitionInfo(partitionColumns);
+        RangePartitionInfo rangePartitionInfo = new RangePartitionInfo(this.partitionExprs, partitionColumns);
         for (SinglePartitionDesc desc : singlePartitionDescs) {
             long partitionId = partitionNameToId.get(desc.getPartitionName());
             rangePartitionInfo.handleNewSinglePartitionDesc(desc, partitionId, isTemp);
