@@ -540,14 +540,10 @@ public class CreateTableStmt extends DdlStmt {
                 if (partitionDesc instanceof ListPartitionDesc || partitionDesc instanceof RangePartitionDesc
                         || partitionDesc instanceof ColumnPartitionDesc) {
                     partitionDesc.analyze(columnDefs, properties);
-                // } else if (partitionDesc instanceof ExpressionPartitionDesc && Config.enable_expression_partition) {
-                // maybe should add config variable
                 } else if (partitionDesc instanceof ExpressionPartitionDesc) {
-                    LOG.info("expressionPartitionDesc.analyze(columnDefs, properties)-----------------");
                     ExpressionPartitionDesc expressionPartitionDesc = (ExpressionPartitionDesc) partitionDesc;
                     try {
                         expressionPartitionDesc.analyze(columnDefs, properties);
-                        // expressionPartitionDesc.analyzeExpr(analyzer);
                     } catch (AnalysisException e) {
                         throw new AnalysisException("ExpressionPartitionDesc analyze error with: " + e.getMessage());
                     }

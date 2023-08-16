@@ -304,14 +304,11 @@ public class OlapTableSink extends DataSink {
         partitionParam.setVersion(0);
 
         PartitionType partType = table.getPartitionInfo().getType();
-        LOG.info("table.getPartitionInfo(): " + table.getPartitionInfo().toString());
         switch (partType) {
             case LIST:
             case RANGE: 
             case EXPR_RANGE: {
                 PartitionInfo partitionInfo = table.getPartitionInfo();
-                LOG.info("partitionInfo: " + partitionInfo.toString());
-                LOG.info("partitionIds: " + partitionIds.toString());
                 for (Column partCol : partitionInfo.getPartitionColumns()) {
                     partitionParam.addToPartitionColumns(partCol.getName());
                 }
@@ -332,7 +329,6 @@ public class OlapTableSink extends DataSink {
                         tPartition.setNumBuckets(index.getTablets().size());
                     }
                     tPartition.setIsMutable(table.getPartitionInfo().getIsMutable(partitionId));
-                    LOG.info("tPartition: " + tPartition.toString());
                     partitionParam.addToPartitions(tPartition);
 
                     DistributionInfo distInfo = partition.getDistributionInfo();
@@ -350,21 +346,16 @@ public class OlapTableSink extends DataSink {
                 if (partitionIds.isEmpty()) {
                     partitionParam.setPartitions(new ArrayList<TOlapTablePartition>());
                 }
-                if (partitionInfo instanceof ExpressionRangePartitionInfo) {
-                    ExpressionRangePartitionInfo exprPartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
-                    List<Expr> exprs = exprPartitionInfo.getPartitionExprs();
-                    if (analyzer != null) {
-                        tupleDescriptor.setTable(table);
-                        analyzer.registerTupleDescriptor(tupleDescriptor);
-                        for(Expr e : exprs) {
-                            e.analyze(analyzer);
-                        }
+                List<Expr> exprs = partitionInfo.getPartitionExprs();
+                if (exprs != null && analyzer != null) {
+                    tupleDescriptor.setTable(table);
+                    analyzer.registerTupleDescriptor(tupleDescriptor);
+                    for(Expr e : exprs) {
+                        e.analyze(analyzer);
                     }
                     partitionParam.setPartitionFunctionExprs(Expr.treesToThrift(exprs));
-                    partitionParam.setEnableAutomaticPartition(true);
-                } else {
-                    partitionParam.setEnableAutomaticPartition(false);
                 }
+                partitionParam.setEnableAutomaticPartition(partitionInfo.enableAutomaticPartition());
                 break;
             }
             case UNPARTITIONED: {
@@ -391,7 +382,6 @@ public class OlapTableSink extends DataSink {
                 throw new UserException("unsupported partition for OlapTable, partition=" + partType);
             }
         }
-        LOG.info("asdpartitionParampartitionParampartitionParam: " + partitionParam.toString());
         return partitionParam;
     }
 

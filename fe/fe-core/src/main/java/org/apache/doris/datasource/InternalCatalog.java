@@ -1968,7 +1968,7 @@ public class InternalCatalog implements CatalogIf<Database> {
         }
 
         long bufferSize = IdGeneratorUtil.getBufferSizeForCreateTable(stmt, replicaAlloc);
-        IdGeneratorBuffer idGeneratorBuffer = Env.getCurrentEnv().getIdGeneratorBuffer(bufferSize + 3);
+        IdGeneratorBuffer idGeneratorBuffer = Env.getCurrentEnv().getIdGeneratorBuffer(bufferSize);
 
         // create partition info
         PartitionDesc partitionDesc = stmt.getPartitionDesc();
@@ -1981,20 +1981,6 @@ public class InternalCatalog implements CatalogIf<Database> {
                 partitionNameToId.put(desc.getPartitionName(), partitionId);
             }
             partitionInfo = partitionDesc.toPartitionInfo(baseSchema, partitionNameToId, false);
-            // if (partitionInfo instanceof ExpressionRangePartitionInfo) {
-            //     ExpressionRangePartitionInfo expressionRangePartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
-            //     long partitionId = idGeneratorBuffer.getNextId();
-            //     expressionRangePartitionInfo.createAutomaticShadowPartition(partitionId, replicaAlloc);
-            //     partitionNameToId.put(ExpressionRangePartitionInfo.AUTOMATIC_SHADOW_PARTITION_NAME, partitionId);
-            //                 DataProperty dataProperty = null;
-            //     try {
-            //         dataProperty = PropertyAnalyzer.analyzeDataProperty(stmt.getProperties(),
-            //                 new DataProperty(DataProperty.DEFAULT_STORAGE_MEDIUM));
-            //     } catch (AnalysisException e) {
-            //         throw new DdlException(e.getMessage());
-            //     }
-            //     expressionRangePartitionInfo.setDataProperty(partitionId, dataProperty);
-            // }
         } else {
             if (DynamicPartitionUtil.checkDynamicPartitionPropertiesExist(stmt.getProperties())) {
                 throw new DdlException("Only support dynamic partition properties on range partition table");

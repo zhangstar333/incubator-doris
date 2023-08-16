@@ -18,7 +18,7 @@
 package org.apache.doris.catalog;
 
 import org.apache.doris.analysis.AllPartitionDesc;
-import org.apache.doris.analysis.ExpressionPartitionDesc;
+import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.PartitionDesc;
 import org.apache.doris.analysis.PartitionKeyDesc;
 import org.apache.doris.analysis.RangePartitionDesc;
@@ -26,7 +26,6 @@ import org.apache.doris.analysis.SinglePartitionDesc;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.util.RangeUtils;
-import org.apache.doris.thrift.TStorageMedium;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -56,6 +55,13 @@ public class RangePartitionInfo extends PartitionInfo {
         super(PartitionType.RANGE);
         this.partitionColumns = partitionColumns;
         this.isMultiColumnPartition = partitionColumns.size() > 1;
+    }
+
+    public RangePartitionInfo(List<Expr> exprs, List<Column> partitionColumns) {
+        super(PartitionType.RANGE, partitionColumns);
+        if (exprs != null) {
+            this.partitionExprs.addAll(exprs);
+        }
     }
 
     @Override
@@ -178,33 +184,6 @@ public class RangePartitionInfo extends PartitionInfo {
         return newRange;
     }
 
-    public Range<PartitionKey> getRange(long partitionId) {
-        // Range<PartitionKey> range = idToRange.get(partitionId);
-        // if (range == null) {
-        //     range = idToTempRange.get(partitionId);
-        // }
-        // return range;
-        return null;
-    }
-
-    public Range<PartitionKey> createAutomaticShadowPartition(long partitionId, ReplicaAllocation replicate) throws DdlException {
-         Range<PartitionKey> range = null;
-        try {
-            PartitionKey shadowPartitionKey = PartitionKey.createShadowPartitionKey(partitionColumns);
-            range = Range.closedOpen(shadowPartitionKey, shadowPartitionKey);
-            //  setRangeInternal(partitionId, false, range);
-        } catch (IllegalArgumentException e) {
-            // Range.closedOpen may throw this if (lower > upper)
-            throw new DdlException("Invalid key range: " + e.getMessage());
-        }
-        // idToDataProperty.put(partitionId, new DataProperty(TStorageMedium.HDD));
-        idToReplicaAllocation.put(partitionId, replicate);
-        idToInMemory.put(partitionId, false);
-        // idToStorageCacheInfo.put(partitionId, new StorageCacheInfo(true,
-        //          Config.lake_default_storage_cache_ttl_seconds, false));
-        return range;
-    }    
-
     public static void checkPartitionColumn(Column column) throws AnalysisException {
         PrimitiveType type = column.getDataType();
         if (!type.isFixedPointType() && !type.isDateType()) {
@@ -256,7 +235,6 @@ public class RangePartitionInfo extends PartitionInfo {
 
     public void readFields(DataInput in) throws IOException {
         super.readFields(in);
-        LOG.info("readFields(DataInput in) 22222");
         int counter = in.readInt();
         for (int i = 0; i < counter; i++) {
             Column column = Column.read(in);
@@ -356,6 +334,6 @@ public class RangePartitionInfo extends PartitionInfo {
 
             allPartitionDescs.add(new SinglePartitionDesc(false, partitionName, partitionKeyDesc, properties));
         }
-        return new RangePartitionDesc(partitionColumnNames, allPartitionDescs);
+        return new RangePartitionDesc(this.partitionExprs, partitionColumnNames, allPartitionDescs);
     }
 }

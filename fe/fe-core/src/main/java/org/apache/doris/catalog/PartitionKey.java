@@ -69,15 +69,6 @@ public class PartitionKey implements Comparable<PartitionKey>, Writable {
         return isDefaultListPartitionKey;
     }
 
-    public static PartitionKey createShadowPartitionKey(List<Column> columns) {
-         PartitionKey partitionKey = new PartitionKey();
-         for (Column column : columns) {
-             partitionKey.keys.add(new DateLiteral(1, 1, 1));
-             partitionKey.types.add(column.getDataType());
-         }
-         return partitionKey;
-    }
-
     // Factory methods
     public static PartitionKey createInfinityPartitionKey(List<Column> columns, boolean isMax)
             throws AnalysisException {

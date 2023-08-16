@@ -99,7 +99,7 @@ public class FrontendServiceImplTest {
                 + "PARTITION BY date_trunc( event_day,'day') (\n"
                 + "\n"
                 + ")\n"
-                + "DISTRIBUTED BY HASH(event_day, site_id) BUCKETS 32\n"
+                + "DISTRIBUTED BY HASH(event_day, site_id) BUCKETS 2\n"
                 + "PROPERTIES(\"replication_num\" = \"1\");");
 
         createTable(createOlapTblStmt);
@@ -131,34 +131,8 @@ public class FrontendServiceImplTest {
         TCreatePartitionResult partition = impl.createPartition(request);
 
         Assert.assertEquals(partition.getStatus().getStatusCode(), TStatusCode.OK);
-        Partition p20230807 = table.getPartition("p20230807");
+        Partition p20230807 = table.getPartition("p20230807000000");
         Assert.assertNotNull(p20230807);
-
-        String sql = "SELECT * from test.partition_by_test_newer";
-        SelectStmt stmt = (SelectStmt) UtFrameUtils.parseAndAnalyzeStmt(sql, connectContext);
-
-        String str = new String("asd");
-    }
-
-    @Test
-    public void testFormat() {
-        String value = new String("2022-10-11 12:13:23");
-        DateTimeFormatter beginDateTimeFormat;
-        LocalDateTime beginTime;
-
-        try {
-            beginDateTimeFormat = ExpressionPartitionDesc.probeFormat(value);
-        } catch (AnalysisException e) {
-            throw new RuntimeException(e);
-        }
-        beginTime = ExpressionPartitionDesc.parseStringWithDefaultHSM(value, beginDateTimeFormat);
-        String lowerBound = beginTime.format(ExpressionPartitionDesc.DATEKEY_FORMATTER);
-        String lowerBound2 = beginTime.format(ExpressionPartitionDesc.DATE_FORMATTER);
-        String lowerBound3 = beginTime.format(ExpressionPartitionDesc.DATE_TIME_FORMATTER);
-        System.out.println(lowerBound);
-        System.out.println(lowerBound2);
-        System.out.println(lowerBound3);
-        String partitionName = "p" + lowerBound;
     }
 
 }

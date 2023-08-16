@@ -1755,7 +1755,6 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         return result;
     }
 
-
     private void streamLoadPutWithSqlImpl(TStreamLoadPutRequest request) throws UserException {
         LOG.info("receive stream load put request");
         String loadSql = request.getLoadSql();
@@ -1958,14 +1957,16 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                     txnStatus = TransactionStatus.COMMITTED;
                 }
             } catch (Throwable t) {
-                // if any throwable being thrown during insert operation, first we should abort this txn
+                // if any throwable being thrown during insert operation, first we should abort
+                // this txn
                 LOG.warn("handle insert stmt fail: {}", label, t);
                 try {
                     Env.getCurrentGlobalTransactionMgr().abortTransaction(
                             insertStmt.getDbObj().getId(), insertStmt.getTransactionId(),
                             t.getMessage() == null ? "unknown reason" : t.getMessage());
                 } catch (Exception abortTxnException) {
-                    // just print a log if abort txn failed. This failure do not need to pass to user.
+                    // just print a log if abort txn failed. This failure do not need to pass to
+                    // user.
                     // user only concern abort how txn failed.
                     LOG.warn("errors when abort txn", abortTxnException);
                 }
@@ -2924,51 +2925,8 @@ public class FrontendServiceImpl implements FrontendService.Iface {
             return result;
         }
 
-        ExpressionRangePartitionInfo expressionRangePartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
-        List<Expr> partitionExprs = expressionRangePartitionInfo.getPartitionExprs();
-        if (partitionExprs.size() != 1) {
-            errorStatus.setErrorMsgs(Lists.newArrayList("only support one expression partitionExpr."));
-            result.setStatus(errorStatus);
-            return result;
-        }
-
-        Expr expr = partitionExprs.get(0);
-        if (!(expr instanceof FunctionCallExpr)) {
-            errorStatus.setErrorMsgs(Lists.newArrayList("only support FunctionCallExpr"));
-            result.setStatus(errorStatus);
-            return result;
-        }
-        FunctionCallExpr functionCallExpr = (FunctionCallExpr) expr;
-        String fnName = functionCallExpr.getFnName().getFunction();
-        List<Expr> paramsExprs = functionCallExpr.getParams().exprs();
-        long interval = 1;
-        String granularity;
-        if (fnName.equalsIgnoreCase("date_trunc")) {
-            if (paramsExprs.size() != 2) {
-                errorStatus.setErrorMsgs(Lists.newArrayList("params exprs size should be 2."));
-                result.setStatus(errorStatus);
-                return result;
-            }
-            Expr granularityExpr = paramsExprs.get(1);
-            if (!(granularityExpr instanceof StringLiteral)) {
-                errorStatus.setErrorMsgs(Lists.newArrayList("date_trunc granularity is not string literal."));
-                result.setStatus(errorStatus);
-                return result;
-            }
-            StringLiteral granularityLiteral = (StringLiteral) granularityExpr;
-            granularity = granularityLiteral.getStringValue();
-        } else if (fnName.equalsIgnoreCase("date_floor") || fnName.equalsIgnoreCase("date_ceil")) {
-            ////////// should add later !!!!!!
-            granularity = "asd";
-        } else {
-            errorStatus.setErrorMsgs(Lists.newArrayList("only support data_trunc/date_floor/date_ceil function."));
-            result.setStatus(errorStatus);
-            return result;
-        }
-
         Map<String, AddPartitionClause> addPartitionClauseMap;
         try {
-            Column firstPartitionColumn = expressionRangePartitionInfo.getPartitionColumns().get(0);
             addPartitionClauseMap = ExpressionPartitionDesc.getAddPartitionClauseFromPartitionValues(olapTable,
                     partitionValues);
         } catch (AnalysisException ex) {
@@ -2979,15 +2937,7 @@ public class FrontendServiceImpl implements FrontendService.Iface {
 
         for (AddPartitionClause addPartitionClause : addPartitionClauseMap.values()) {
             try {
-                // if (olapTable.getNumberOfPartitions() >
-                // Config.max_automatic_partition_number) {
-                if (olapTable.getAllPartitions().size() > 10) {
-                    // throw new AnalysisException(" Automatically created partitions exceeded the
-                    // maximum limit: " +
-                    // Config.max_automatic_partition_number + ". You can modify this restriction on
-                    // by setting" +
-                    // " max_automatic_partition_number larger.");
-                }
+                // here maybe check and limit created partitions num
                 Env.getCurrentEnv().addPartition(db, olapTable.getName(), addPartitionClause);
             } catch (DdlException e) {
                 LOG.warn(e);

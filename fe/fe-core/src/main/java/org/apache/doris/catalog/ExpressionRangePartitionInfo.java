@@ -22,17 +22,13 @@ import org.apache.doris.analysis.ExpressionPartitionDesc;
 import org.apache.doris.analysis.FunctionCallExpr;
 import org.apache.doris.analysis.SlotRef;
 import org.apache.doris.common.util.RangeUtils;
-import org.apache.doris.persist.gson.GsonUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Range;
-import com.google.gson.annotations.SerializedName;
 
 import org.apache.doris.common.AnalysisException;
-import org.apache.doris.common.io.Text;
-import com.google.gson.reflect.TypeToken;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -44,10 +40,6 @@ import java.util.Optional;
 
 public class ExpressionRangePartitionInfo extends RangePartitionInfo {
     private static final Logger LOG = LogManager.getLogger(ExpressionRangePartitionInfo.class);
-    public static final String AUTOMATIC_SHADOW_PARTITION_NAME = "$shadow_automatic_partition";
-    public static final String SHADOW_PARTITION_PREFIX = "$";
-    @SerializedName(value = "partitionExprs")
-    private List<Expr> partitionExprs;
 
     public ExpressionRangePartitionInfo() {
         this.type = PartitionType.EXPR_RANGE;
@@ -63,12 +55,9 @@ public class ExpressionRangePartitionInfo extends RangePartitionInfo {
         this.type = type;
     }
 
-    public List<Expr> getPartitionExprs() {
-        return partitionExprs;
-    }
-
-    public void setPartitionExprs(List<Expr> partitionExprs) {
-        this.partitionExprs = partitionExprs;
+    @Override
+    public boolean enableAutomaticPartition() {
+        return true;
     }
 
     public static PartitionInfo read(DataInput in) throws IOException {
@@ -90,7 +79,6 @@ public class ExpressionRangePartitionInfo extends RangePartitionInfo {
 
     public void readFields(DataInput in) throws IOException {
         super.readFields(in);
-        LOG.info("readFields(DataInput in) 1111111");
         partitionExprs = new ArrayList<>();
         int size = in.readInt();
         for (int i = 0; i < size; ++i) {

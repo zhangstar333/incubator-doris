@@ -52,26 +52,24 @@ public class ExpressionPartitionDesc extends PartitionDesc {
 
     private static final Logger LOG = LogManager.getLogger(ExpressionPartitionDesc.class);
     private Expr expr;
-    private RangePartitionDesc rangePartitionDesc = null;
+    // private RangePartitionDesc rangePartitionDesc = null;
     public static final Set<String> SUPPORTED_PARTITION_FORMAT = ImmutableSet.of("hour", "day", "month", "year");
-
-    public ExpressionPartitionDesc(Expr expr) {
-        this.expr = expr;
-    }
-
+    public static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    public static final DateTimeFormatter DATETIME_NAME_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    
     public ExpressionPartitionDesc(Expr expr, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
         this.expr = expr;
         try {
             this.partitionColNames = new ArrayList<>();
             checkFunctionExpr(expr, partitionColNames);
-            this.rangePartitionDesc = new RangePartitionDesc(partitionColNames,
+            RangePartitionDesc rangePartitionDesc = new RangePartitionDesc(partitionColNames,
                     allPartitionDescs);
-            this.singlePartitionDescs = this.rangePartitionDesc.getSinglePartitionDescs();
+            this.singlePartitionDescs = rangePartitionDesc.getSinglePartitionDescs();
         } catch (AnalysisException e) {
             throw new AnalysisException("ExpressionPartitionDesc have meet some error " +
                     e.toString());
         }
-        // this.type = PartitionType.EXPR_RANGE;
+        this.type = PartitionType.EXPR_RANGE;
     }
 
     public void checkFunctionExpr(Expr expr, List<String> partitionColNames)
@@ -123,17 +121,9 @@ public class ExpressionPartitionDesc extends PartitionDesc {
             }
         } else {
             throw new AnalysisException(
-                    "ExpressionPartitionDesc the partition by expr is function call expr " +
+                    "ExpressionPartitionDesc only support function call expr " +
                             expr.toSql());
         }
-    }
-
-    public RangePartitionDesc getRangePartitionDesc() {
-        return rangePartitionDesc;
-    }
-
-    public void analyzeExpr(Analyzer analyzer) throws AnalysisException {
-        expr.analyze(analyzer);
     }
 
     public static SlotRef getSlotRefFromFunctionCallExpr(Expr expr) {
@@ -176,10 +166,11 @@ public class ExpressionPartitionDesc extends PartitionDesc {
 
     @Override
     public void analyze(List<ColumnDef> columnDefs, Map<String, String> otherProperties) throws AnalysisException {
+        super.analyze(columnDefs, otherProperties);
         boolean hasExprAnalyze = false;
-        if (rangePartitionDesc != null) {
-            rangePartitionDesc.analyze(columnDefs, otherProperties);
-        }
+        // if (rangePartitionDesc != null) {
+        //     rangePartitionDesc.analyze(columnDefs, otherProperties);
+        // }
         SlotRef slotRef = getSlotRefFromFunctionCallExpr(expr);
 
         for (ColumnDef columnDef : columnDefs) {
@@ -235,26 +226,21 @@ public class ExpressionPartitionDesc extends PartitionDesc {
     @Override
     public PartitionInfo toPartitionInfo(List<Column> schema, Map<String, Long> partitionNameToId, boolean isTemp)
             throws DdlException {
-        if (rangePartitionDesc == null) {
-            return new ExpressionRangePartitionInfo(Collections.singletonList(expr),
-                    schema, PartitionType.RANGE);
-        }
-        PartitionType partitionType = PartitionType.RANGE;
-        // if (isExprPartition) { // here should change now debug
-        if (true) {
-            partitionType = PartitionType.EXPR_RANGE;
-        }
+        // if (rangePartitionDesc == null) {
+        //     return new ExpressionRangePartitionInfo(Collections.singletonList(expr),
+        //             schema, PartitionType.RANGE);
+        // }
+        PartitionType partitionType = PartitionType.EXPR_RANGE;
 
         List<Column> partitionColumns = new ArrayList<>();
-        for (String colName : rangePartitionDesc.getPartitionColNames()) {
+        for (String colName : getPartitionColNames()) {
             findRangePartitionColumn(schema, partitionColumns, colName);
         }
 
         ExpressionRangePartitionInfo expressionRangePartitionInfo = new ExpressionRangePartitionInfo(
-                Collections.singletonList(expr),
-                partitionColumns, partitionType);
+                Collections.singletonList(expr), partitionColumns, partitionType);
 
-        for (SinglePartitionDesc desc : rangePartitionDesc.singlePartitionDescs) {
+        for (SinglePartitionDesc desc : singlePartitionDescs) {
             long partitionId = partitionNameToId.get(desc.getPartitionName());
             expressionRangePartitionInfo.handleNewSinglePartitionDesc(desc, partitionId,
                     isTemp);
@@ -299,28 +285,21 @@ public class ExpressionPartitionDesc extends PartitionDesc {
             List<TPartitionByRange> partitionValues) throws AnalysisException {
         Map<String, AddPartitionClause> result = Maps.newHashMap();
         for (TPartitionByRange partitionValue : partitionValues) {
-            DateTimeFormatter beginDateTimeFormat;
-            LocalDateTime beginTime;
-            LocalDateTime endTime;
-
-            try {
-                beginDateTimeFormat = ExpressionPartitionDesc.probeFormat(partitionValue.start_key.date_literal.value);
-            } catch (AnalysisException e) {
-                throw new RuntimeException(e);
-            }
-            beginTime = ExpressionPartitionDesc.parseStringWithDefaultHSM(partitionValue.start_key.date_literal.value, beginDateTimeFormat);
-            endTime = ExpressionPartitionDesc.parseStringWithDefaultHSM(partitionValue.end_key.date_literal.value, beginDateTimeFormat);
-            String lowerBound = beginTime.format(ExpressionPartitionDesc.DATEKEY_FORMATTER);
-            String upperBound = endTime.format(ExpressionPartitionDesc.DATEKEY_FORMATTER);
+            String beginTime = partitionValue.start_key.date_literal.value;
+            String endTime = partitionValue.end_key.date_literal.value;
 
             // maybe need check the range in FE also, like getAddPartitionClause.
-            PartitionValue lowerValue = new PartitionValue(lowerBound);
-            PartitionValue upperValue = new PartitionValue(upperBound);
+            PartitionValue lowerValue = new PartitionValue(beginTime);
+            PartitionValue upperValue = new PartitionValue(endTime);
             PartitionKeyDesc partitionKeyDesc = PartitionKeyDesc.createFixed(
                     Collections.singletonList(lowerValue),
                     Collections.singletonList(upperValue));
 
+            LocalDateTime dateTime = ExpressionPartitionDesc.parseStringWithDefaultHSM(beginTime,
+                                DATETIME_FORMATTER);
+            String lowerBound = dateTime.format(DATETIME_NAME_FORMATTER);
             String partitionName = "p" + lowerBound;
+
             Map<String, String> partitionProperties = Maps.newHashMap();
             // here need check
             Short replicationNum = olapTable.getTableProperty().getReplicaAllocation()
@@ -338,26 +317,6 @@ public class ExpressionPartitionDesc extends PartitionDesc {
         return result;
     }
 
-    public static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-    public static final DateTimeFormatter DATEKEY_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
-    public static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-    public static DateTimeFormatter probeFormat(String dateTimeStr) throws AnalysisException {
-        if (dateTimeStr.length() == 8) {
-            return DATEKEY_FORMATTER;
-        } else if (dateTimeStr.length() == 10) {
-            return DATE_FORMATTER;
-        } else if (dateTimeStr.length() == 19) {
-            return DATE_TIME_FORMATTER;
-        } else {
-            throw new AnalysisException("can not probe datetime format:" + dateTimeStr);
-        }
-    }
-
-    /*
-     * Parse datetime string use formatter, and if hour/minute/second is null will
-     * fill 00:00:00
-     */
     public static LocalDateTime parseStringWithDefaultHSM(String datetime,
             DateTimeFormatter formatter) {
         TemporalAccessor temporal = formatter.parse(datetime);
