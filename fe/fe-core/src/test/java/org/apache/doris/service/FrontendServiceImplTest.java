@@ -63,6 +63,7 @@ public class FrontendServiceImplTest {
         FeConstants.default_scheduler_interval_millisecond = 100;
         Config.dynamic_partition_enable = true;
         Config.dynamic_partition_check_interval_seconds = 1;
+        Config.enable_auto_create_partition=true;
         UtFrameUtils.createDorisCluster(runningDir);
         // create connect context
         connectContext = UtFrameUtils.createDefaultCtx();
@@ -84,8 +85,8 @@ public class FrontendServiceImplTest {
 
 
     @Test
-    public void testCreatePartitionApi() throws Exception {
-        String createOlapTblStmt = new String("CREATE TABLE test.partition_by_test_newer(\n"
+    public void testCreatePartitionRange() throws Exception {
+        String createOlapTblStmt = new String("CREATE TABLE test.partition_range(\n"
                 + "    event_day DATETIME,\n"
                 + "    site_id INT DEFAULT '10',\n"
                 + "    city_code VARCHAR(100)\n"
@@ -99,7 +100,7 @@ public class FrontendServiceImplTest {
 
         createTable(createOlapTblStmt);
         Database db = Env.getCurrentInternalCatalog().getDbOrAnalysisException("default_cluster:test");
-        OlapTable table = (OlapTable) db.getTableOrAnalysisException("partition_by_test_newer");
+        OlapTable table = (OlapTable) db.getTableOrAnalysisException("partition_range");
 
         List<List<TPartitionByRange>> partitionValues = Lists.newArrayList();
         List<TPartitionByRange> values = Lists.newArrayList();
@@ -128,6 +129,53 @@ public class FrontendServiceImplTest {
         Assert.assertEquals(partition.getStatus().getStatusCode(), TStatusCode.OK);
         Partition p20230807 = table.getPartition("p20230807000000");
         Assert.assertNotNull(p20230807);
+    }
+
+    @Test
+    public void testCreatePartitionList() throws Exception {
+        String createOlapTblStmt = new String("CREATE TABLE test.partition_list(\n"
+                + "    event_day DATETIME,\n"
+                + "    site_id INT DEFAULT '10',\n"
+                + "    city_code VARCHAR(100) not null\n"
+                + ")\n"
+                + "DUPLICATE KEY(event_day, site_id, city_code)\n"
+                + "PARTITION BY list upper(city_code) (\n"
+                + "\n"
+                + ")\n"
+                + "DISTRIBUTED BY HASH(event_day, site_id) BUCKETS 2\n"
+                + "PROPERTIES(\"replication_num\" = \"1\");");
+
+        createTable(createOlapTblStmt);
+        Database db = Env.getCurrentInternalCatalog().getDbOrAnalysisException("default_cluster:test");
+        OlapTable table = (OlapTable) db.getTableOrAnalysisException("partition_list");
+
+        List<List<TPartitionByRange>> partitionValues = Lists.newArrayList();
+        List<TPartitionByRange> values = Lists.newArrayList();
+        TPartitionByRange range = new TPartitionByRange();
+
+        TExprNode start = new TExprNode();
+        TDateLiteral dateLiteral = new TDateLiteral("BEIJING");
+        start.setDateLiteral(dateLiteral);
+        range.setStartKey(start);
+
+        TExprNode end = new TExprNode();
+        TDateLiteral dateLiteral2 = new TDateLiteral("BEIJING");
+        end.setDateLiteral(dateLiteral2);
+        range.setEndKey(end);
+
+        values.add(range);
+        partitionValues.add(values);
+
+        FrontendServiceImpl impl = new FrontendServiceImpl(exeEnv);
+        TCreatePartitionRequest request = new TCreatePartitionRequest();
+        request.setDbId(db.getId());
+        request.setTableId(table.getId());
+        request.setPartitionValues(partitionValues);
+        TCreatePartitionResult partition = impl.createPartition(request);
+
+        Assert.assertEquals(partition.getStatus().getStatusCode(), TStatusCode.OK);
+        Partition pbeijing = table.getPartition("pBEIJING");
+        Assert.assertNotNull(pbeijing);
     }
 
 }

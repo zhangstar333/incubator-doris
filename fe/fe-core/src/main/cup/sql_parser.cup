@@ -3216,29 +3216,31 @@ opt_partition ::=
     {:
         RESULT = null;
     :}
-    /* Range partition */
-    | KW_PARTITION KW_BY KW_RANGE LPAREN ident_list:columns RPAREN
-            LPAREN opt_all_partition_desc_list:list RPAREN
-    {:
-        RESULT = new RangePartitionDesc(columns, list);
-    :}
-    /* List partition */
-    | KW_PARTITION KW_BY KW_LIST LPAREN ident_list:columns RPAREN
-            LPAREN opt_all_partition_desc_list:list RPAREN
-    {:
-        RESULT = new ListPartitionDesc(columns, list);
-    :}
     /* expr range partition */
+    | KW_PARTITION KW_BY KW_RANGE LPAREN expr_list:exprs RPAREN
+            LPAREN opt_all_partition_desc_list:list RPAREN
+    {:
+        RESULT = RangePartitionDesc.createRangePartitionDesc(exprs, list);
+    :}
     | KW_PARTITION KW_BY KW_RANGE function_call_expr:fnExpr
             LPAREN opt_all_partition_desc_list:list RPAREN
     {:
-        RESULT = new RangePartitionDesc(fnExpr, list);
+        ArrayList<Expr> exprs = new ArrayList<Expr>();
+        exprs.add(fnExpr);
+        RESULT = RangePartitionDesc.createRangePartitionDesc(exprs, list);
     :}
     /* expr list partition */
-    | KW_PARTITION KW_BY  KW_LIST function_call_expr:fnExpr
+    | KW_PARTITION KW_BY KW_LIST LPAREN expr_list:exprs RPAREN
             LPAREN opt_all_partition_desc_list:list RPAREN
     {:
-        RESULT = new ListPartitionDesc(fnExpr, list);
+        RESULT = ListPartitionDesc.createListPartitionDesc(exprs, list);
+    :}
+    | KW_PARTITION KW_BY KW_LIST function_call_expr:fnExpr
+            LPAREN opt_all_partition_desc_list:list RPAREN
+    {:
+        ArrayList<Expr> exprs = new ArrayList<Expr>();
+        exprs.add(fnExpr);
+        RESULT = ListPartitionDesc.createListPartitionDesc(exprs, list);
     :}
     ;
 

@@ -55,21 +55,24 @@ public class PartitionExprUtil {
             PartitionValue lowerValue = new PartitionValue(beginTime);
             PartitionValue upperValue = new PartitionValue(endTime);
             PartitionKeyDesc partitionKeyDesc = null;
+            String partitionName = "p";
             if (partitionType == PartitionType.RANGE) {
              partitionKeyDesc = PartitionKeyDesc.createFixed(
                     Collections.singletonList(lowerValue),
                     Collections.singletonList(upperValue));
+                LocalDateTime dateTime = parseStringWithDefaultHSM(beginTime,
+                        DATETIME_FORMATTER);
+                String lowerBound = dateTime.format(DATETIME_NAME_FORMATTER);
+                partitionName += lowerBound;
             } else if (partitionType == PartitionType.LIST) {
                 List<List<PartitionValue>> listValues = new ArrayList<>();
                 listValues.add(Collections.singletonList(lowerValue));
                 partitionKeyDesc = PartitionKeyDesc.createIn(
                     listValues);
+                partitionName += lowerValue.getStringValue();
+            } else {
+                throw new AnalysisException("now only support range and list partition");
             }
-
-            LocalDateTime dateTime = parseStringWithDefaultHSM(beginTime,
-                    DATETIME_FORMATTER);
-            String lowerBound = dateTime.format(DATETIME_NAME_FORMATTER);
-            String partitionName = "p" + lowerBound;
 
             Map<String, String> partitionProperties = Maps.newHashMap();
             // here need check
