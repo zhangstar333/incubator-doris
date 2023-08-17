@@ -24,6 +24,7 @@ import org.apache.doris.analysis.PartitionDesc;
 import org.apache.doris.analysis.PartitionValue;
 import org.apache.doris.analysis.SinglePartitionDesc;
 import org.apache.doris.common.AnalysisException;
+import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.FeMetaVersion;
 import org.apache.doris.common.io.Text;
@@ -84,7 +85,7 @@ public class PartitionInfo implements Writable {
     protected Map<Long, TTabletType> idToTabletType;
 
     // the enable automatic partition will hold this, could create partition by expr result 
-    protected List<Expr> partitionExprs;
+    protected ArrayList<Expr> partitionExprs;
 
     public PartitionInfo() {
         this.type = PartitionType.UNPARTITIONED;
@@ -224,7 +225,7 @@ public class PartitionInfo implements Writable {
 
     // now if the partition hold exprs, we thinks it's could auto create partitions
     public boolean enableAutomaticPartition() {
-        return (this.partitionExprs.isEmpty() == false);
+        return Config.enable_auto_create_partition && (!this.partitionExprs.isEmpty());
     }
 
     public List<Expr> getPartitionExprs() {

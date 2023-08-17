@@ -22,6 +22,7 @@ import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.PartitionInfo;
 import org.apache.doris.catalog.RangePartitionInfo;
 import org.apache.doris.common.AnalysisException;
+import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
 
 import java.util.ArrayList;
@@ -37,21 +38,22 @@ public class RangePartitionDesc extends PartitionDesc {
         type = org.apache.doris.catalog.PartitionType.RANGE;
     }
 
-    public RangePartitionDesc(Expr expr, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
-        this.partitionExprs = new ArrayList<>();
-        this.partitionExprs.add(expr);
-        this.partitionColNames = getColNamesFromExpr(expr);
-        this.singlePartitionDescs = handleAllPartitionDesc(allPartitionDescs);
-        this.type = org.apache.doris.catalog.PartitionType.RANGE;
-    }
-
-    public RangePartitionDesc(List<Expr> exprs, List<String> partitionColNames, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+    public RangePartitionDesc(ArrayList<Expr> exprs, List<String> partitionColNames, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
         if (exprs != null) {
             this.partitionExprs = exprs;
         }
         this.partitionColNames = partitionColNames;
         this.singlePartitionDescs = handleAllPartitionDesc(allPartitionDescs);
         this.type = org.apache.doris.catalog.PartitionType.RANGE;
+    }
+
+    public static RangePartitionDesc createRangePartitionDesc(ArrayList<Expr> exprs, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+        List<String> colNames = getColNamesFromExpr(exprs);
+        if (Config.enable_auto_create_partition) {
+            return new RangePartitionDesc(exprs, colNames, allPartitionDescs);
+        } else {
+            return new RangePartitionDesc(colNames, allPartitionDescs);
+        }
     }
 
     @Override

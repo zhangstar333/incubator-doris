@@ -2122,4 +2122,9 @@ public class Config extends ConfigBase {
 
     @ConfField
     public static int table_stats_health_threshold = 80;
+
+    @ConfField(mutable = true, masterOnly = true, description = {
+            "是否可以在导入时自动创建不存在的分区.",
+            "Whether to create parition automatically which is not exist during import data."})
+    public static boolean enable_auto_create_partition = false;    
 }

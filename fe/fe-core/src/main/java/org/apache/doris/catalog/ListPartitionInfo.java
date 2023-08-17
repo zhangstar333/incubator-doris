@@ -55,7 +55,7 @@ public class ListPartitionInfo extends PartitionInfo {
         this.isMultiColumnPartition = partitionColumns.size() > 1;
     }
 
-    public ListPartitionInfo(List<Expr> exprs, List<Column> partitionColumns) {
+    public ListPartitionInfo(ArrayList<Expr> exprs, List<Column> partitionColumns) {
         super(PartitionType.LIST, partitionColumns);
         if (exprs != null) {
             this.partitionExprs.addAll(exprs);

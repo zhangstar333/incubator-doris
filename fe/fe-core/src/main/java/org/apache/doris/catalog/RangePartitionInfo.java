@@ -55,7 +55,7 @@ public class RangePartitionInfo extends PartitionInfo {
         this.isMultiColumnPartition = partitionColumns.size() > 1;
     }
 
-    public RangePartitionInfo(List<Expr> exprs, List<Column> partitionColumns) {
+    public RangePartitionInfo(ArrayList<Expr> exprs, List<Column> partitionColumns) {
         super(PartitionType.RANGE, partitionColumns);
         if (exprs != null) {
             this.partitionExprs.addAll(exprs);
