@@ -25,22 +25,39 @@
 #include <fmt/format.h>
 #include <gen_cpp/DataSinks_types.h>
 #include <gen_cpp/Descriptors_types.h>
+#include <gen_cpp/Exprs_types.h>
+#include <gen_cpp/FrontendService.h>
+#include <gen_cpp/FrontendService_types.h>
 #include <gen_cpp/Metrics_types.h>
 #include <gen_cpp/Types_types.h>
 #include <gen_cpp/data.pb.h>
 #include <gen_cpp/internal_service.pb.h>
+#include <glog/logging.h>
 #include <google/protobuf/stubs/common.h>
 #include <opentelemetry/nostd/shared_ptr.h>
 #include <sys/param.h>
 #include <sys/types.h>
 
 #include <algorithm>
+#include <boost/algorithm/string/case_conv.hpp>
+#include <cctype>
+#include <exception>
+#include <initializer_list>
 #include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
+
+#include "runtime/datetime_value.h"
+#include "vec/core/columns_with_type_and_name.h"
+#include "vec/data_types/data_type_factory.hpp"
+#include "vec/data_types/data_type_string.h"
+#include "vec/exprs/vexpr_fwd.h"
+#include "vec/functions/simple_function_factory.h"
+#include "vec/runtime/vdatetime_value.h"
 
 #ifdef DEBUG
 #include <unordered_set>
@@ -52,6 +69,7 @@
 #include "common/object_pool.h"
 #include "common/status.h"
 #include "exec/tablet_info.h"
+#include "runtime/client_cache.h"
 #include "runtime/define_primitive_type.h"
 #include "runtime/descriptors.h"
 #include "runtime/exec_env.h"
@@ -70,6 +88,7 @@
 #include "util/telemetry/telemetry.h"
 #include "util/thread.h"
 #include "util/threadpool.h"
+#include "util/thrift_rpc_helper.h"
 #include "util/thrift_util.h"
 #include "util/time.h"
 #include "util/uid_util.h"
@@ -300,26 +319,36 @@ Status IndexChannel::check_tablet_received_rows_consistency() {
     return Status::OK();
 }
 
-VNodeChannel::VNodeChannel(VOlapTableSink* parent, IndexChannel* index_channel, int64_t node_id)
-        : _parent(parent), _index_channel(index_channel), _node_id(node_id) {
+VNodeChannel::VNodeChannel(VOlapTableSink* parent, IndexChannel* index_channel, int64_t node_id,
+                           bool is_incremental)
+        : _parent(parent),
+          _index_channel(index_channel),
+          _node_id(node_id),
+          _is_incremental(is_incremental) {
     _node_channel_tracker = std::make_shared<MemTracker>(fmt::format(
             "NodeChannel:indexID={}:threadId={}", std::to_string(_index_channel->_index_id),
             thread_context()->get_thread_id()));
 }
 
 VNodeChannel::~VNodeChannel() {
-    if (_open_closure != nullptr) {
-        if (_open_closure->unref()) {
-            delete _open_closure;
+    for (auto& closure : _open_closures) {
+        if (closure != nullptr) {
+            if (closure->unref()) {
+                delete closure;
+            }
+            closure = nullptr;
         }
-        _open_closure = nullptr;
     }
+
     if (_add_block_closure != nullptr) {
         delete _add_block_closure;
         _add_block_closure = nullptr;
     }
-    if (_open_closure != nullptr) {
-        delete _open_closure;
+
+    for (auto& closure : _open_closures) {
+        if (closure != nullptr) {
+            delete closure;
+        }
     }
     static_cast<void>(_cur_add_block_request.release_id());
 }
@@ -381,7 +410,8 @@ Status VNodeChannel::init(RuntimeState* state) {
     return Status::OK();
 }
 
-void VNodeChannel::open() {
+void VNodeChannel::_open_internal(RefCountClosure<PTabletWriterOpenResult>* open_closure,
+                                  bool is_incremental) {
     SCOPED_CONSUME_MEM_TRACKER(_node_channel_tracker.get());
     PTabletWriterOpenRequest request;
     request.set_allocated_id(&_parent->_load_id);
@@ -402,48 +432,58 @@ void VNodeChannel::open() {
     request.set_is_vectorized(true);
     request.set_backend_id(_node_id);
     request.set_enable_profile(_state->enable_profile());
-
-    _open_closure = new RefCountClosure<PTabletWriterOpenResult>();
-    _open_closure->ref();
+    request.set_is_incremental(is_incremental);
 
     // This ref is for RPC's reference
-    _open_closure->ref();
-    _open_closure->cntl.set_timeout_ms(config::tablet_writer_open_rpc_timeout_sec * 1000);
+    open_closure->ref();
+    open_closure->cntl.set_timeout_ms(config::tablet_writer_open_rpc_timeout_sec * 1000);
     if (config::tablet_writer_ignore_eovercrowded) {
-        _open_closure->cntl.ignore_eovercrowded();
+        open_closure->cntl.ignore_eovercrowded();
     }
-    _stub->tablet_writer_open(&_open_closure->cntl, &request, &_open_closure->result,
-                              _open_closure);
+    _stub->tablet_writer_open(&_open_closures.back()->cntl, &request, &_open_closures.back()->result,
+                              _open_closures.back());
     static_cast<void>(request.release_id());
     static_cast<void>(request.release_schema());
 }
 
+void VNodeChannel::open() {
+    _open_closures.emplace_back(new RefCountClosure<PTabletWriterOpenResult>());
+    _open_closures.back()->ref();
+    _open_internal(_open_closures.back(), false);
+}
+
+void VNodeChannel::incremental_open() {
+    _open_closures.emplace_back(new RefCountClosure<PTabletWriterOpenResult>());
+    _open_closures.back()->ref();
+    _open_internal(_open_closures.back(), true);
+}
+
 Status VNodeChannel::open_wait() {
-    _open_closure->join();
+    _open_closures.back()->join();
     SCOPED_CONSUME_MEM_TRACKER(_node_channel_tracker.get());
-    if (_open_closure->cntl.Failed()) {
+    if (_open_closures.back()->cntl.Failed()) {
         if (!ExecEnv::GetInstance()->brpc_internal_client_cache()->available(
                     _stub, _node_info.host, _node_info.brpc_port)) {
             ExecEnv::GetInstance()->brpc_internal_client_cache()->erase(
-                    _open_closure->cntl.remote_side());
+                    _open_closures.back()->cntl.remote_side());
         }
 
         _cancelled = true;
-        auto error_code = _open_closure->cntl.ErrorCode();
-        auto error_text = _open_closure->cntl.ErrorText();
-        if (_open_closure->unref()) {
-            delete _open_closure;
+        auto error_code = _open_closures.back()->cntl.ErrorCode();
+        auto error_text = _open_closures.back()->cntl.ErrorText();
+        if (_open_closures.back()->unref()) {
+            delete _open_closures.back();
         }
-        _open_closure = nullptr;
+        _open_closures.back() = nullptr;
         return Status::InternalError(
                 "failed to open tablet writer, error={}, error_text={}, info={}",
                 berror(error_code), error_text, channel_info());
     }
-    Status status(Status::create(_open_closure->result.status()));
-    if (_open_closure->unref()) {
-        delete _open_closure;
+    Status status(Status::create(_open_closures.back()->result.status()));
+    if (_open_closures.back()->unref()) {
+        delete _open_closures.back();
     }
-    _open_closure = nullptr;
+    _open_closures.back() = nullptr;
 
     if (!status.ok()) {
         _cancelled = true;
@@ -1218,6 +1258,93 @@ size_t VOlapTableSink::get_pending_bytes() const {
     return mem_consumption;
 }
 
+Status VOlapTableSink::_automatic_create_partition() {
+    TCreatePartitionRequest request;
+    TCreatePartitionResult result;
+    request.__set_txn_id(_txn_id);
+    request.__set_db_id(_vpartition->db_id());
+    request.__set_table_id(_vpartition->table_id());
+    request.__set_partitionValues(_partitions_need_create);
+
+    VLOG(1) << "automatic partition rpc begin request " << request;
+    TNetworkAddress master_addr = ExecEnv::GetInstance()->master_info()->network_address;
+    int time_out = _state->execution_timeout() * 1000;
+    RETURN_IF_ERROR(ThriftRpcHelper::rpc<FrontendServiceClient>(
+            master_addr.hostname, master_addr.port,
+            [&request, &result](FrontendServiceConnection& client) {
+                client->createPartition(result, request);
+            },
+            time_out));
+
+    Status status(Status::create(result.status));
+    VLOG(1) << "automatic partition rpc end response " << result;
+    if (result.status.status_code == TStatusCode::OK) {
+        // add new created partitions
+        RETURN_IF_ERROR(_vpartition->add_partitions(result.partitions));
+
+        // add new tablet locations
+        _location->add_locations(result.tablets);
+
+        // update new node info
+        _nodes_info->add_nodes(result.nodes);
+
+        // incremental open node channel
+        RETURN_IF_ERROR(_incremental_open_node_channel(result.partitions));
+    }
+
+    return status;
+}
+
+Status VOlapTableSink::_incremental_open_node_channel(
+        const std::vector<TOlapTablePartition>& partitions) {
+    // do what we did in prepare() for partitions. indexes which don't change when we create new partition is orthogonal to partitions.
+    for (int i = 0; i < _schema->indexes().size(); ++i) {
+        const OlapTableIndexSchema* index = _schema->indexes()[i];
+        std::vector<TTabletWithPartition> tablets;
+        for (auto& t_part : partitions) {
+            VOlapTablePartition* part = nullptr;
+            RETURN_IF_ERROR(_vpartition->generate_partition_from(t_part, part));
+            for (const auto& tablet : part->indexes[i].tablets) {
+                TTabletWithPartition tablet_with_partition;
+                tablet_with_partition.partition_id = part->id;
+                tablet_with_partition.tablet_id = tablet;
+                tablets.emplace_back(std::move(tablet_with_partition));
+            }
+            if (UNLIKELY(tablets.empty())) {
+                LOG(WARNING) << "load job:" << _state->load_job_id()
+                             << " index: " << index->index_id << " would open 0 tablet";
+            }
+        }
+        _channels.emplace_back(new IndexChannel {this, index->index_id, index->where_clause});
+        RETURN_IF_ERROR(_channels.back()->init(_state, tablets));
+    }
+
+    fmt::memory_buffer buf;
+    for (auto& channel : _channels) {
+        // incremental open new partition's tablet on storage side
+        channel->for_each_node_channel([](const std::shared_ptr<VNodeChannel>& ch) { ch->open(); });
+        fmt::format_to(buf, "index id:{}", channel->_index_id);
+        VLOG_DEBUG << "list of open index id = " << fmt::to_string(buf);
+
+        channel->for_each_node_channel([&channel](const std::shared_ptr<VNodeChannel>& ch) {
+            auto st = ch->open_wait();
+            if (!st.ok()) {
+                // The open() phase is mainly to generate DeltaWriter instances on the nodes corresponding to each node channel.
+                // This phase will not fail due to a single tablet.
+                // Therefore, if the open() phase fails, all tablets corresponding to the node need to be marked as failed.
+                channel->mark_as_failed(
+                        ch->node_id(), ch->host(),
+                        fmt::format("{}, open failed, err: {}", ch->channel_info(), st.to_string()),
+                        -1);
+            }
+        });
+
+        RETURN_IF_ERROR(channel->check_intolerable_failure());
+    }
+
+    return Status::OK();
+}
+
 void VOlapTableSink::_generate_row_distribution_payload(
         ChannelDistributionPayload& channel_to_payload, const VOlapTablePartition* partition,
         uint32_t tablet_index, int row_idx, size_t row_cnt) {
@@ -1291,6 +1418,75 @@ Status VOlapTableSink::_single_partition_generate(RuntimeState* state, vectorize
     return Status::OK();
 }
 
+std::pair<vectorized::VExprContextSPtr, vectorized::VExprSPtr>
+VOlapTableSink::_get_partition_function() {
+    return {_vpartition->get_part_func_ctx(), _vpartition->get_partition_function()};
+}
+
+std::string VOlapTableSink::_get_part_interval() {
+    return _vpartition->get_part_interval();
+}
+
+template <typename T>
+    requires(std::is_same_v<T, vectorized::DateV2Value<vectorized::DateV2ValueType>> ||
+             std::is_same_v<T, vectorized::DateV2Value<vectorized::DateTimeV2ValueType>>)
+static auto get_partition_bound_function(const std::string& func_name) {
+    if (func_name == "SECOND") {
+        return &T::template date_add_interval<vectorized::TimeUnit::SECOND>;
+    } else if (func_name == "MINUTE") {
+        return &T::template date_add_interval<vectorized::TimeUnit::MINUTE>;
+    } else if (func_name == "HOUR") {
+        return &T::template date_add_interval<vectorized::TimeUnit::HOUR>;
+    } else if (func_name == "DAY") {
+        return &T::template date_add_interval<vectorized::TimeUnit::DAY>;
+    } else if (func_name == "WEEK") {
+        return &T::template date_add_interval<vectorized::TimeUnit::WEEK>;
+    } else if (func_name == "QUARTER") {
+        return &T::template date_add_interval<vectorized::TimeUnit::QUARTER>;
+    } else if (func_name == "YEAR") {
+        return &T::template date_add_interval<vectorized::TimeUnit::YEAR>;
+    }
+    __builtin_unreachable();
+}
+
+template <typename TO_TYPE>
+    requires(std::is_same_v<TO_TYPE, vectorized::DateV2Value<vectorized::DateV2ValueType>> ||
+             std::is_same_v<TO_TYPE, vectorized::DateV2Value<vectorized::DateTimeV2ValueType>>)
+void VOlapTableSink::_calc_save_a_boundary(auto* col, int row, auto end_calculator,
+                                           const std::string& interval_name, char* convert_buffer) {
+    using FROM_TYPE = std::conditional_t<
+            std::is_same_v<TO_TYPE, vectorized::DateV2Value<vectorized::DateV2ValueType>>,
+            vectorized::UInt32, vectorized::UInt64>;
+    constexpr PrimitiveType Value_Type =
+            (std::is_same_v<TO_TYPE, vectorized::DateV2Value<vectorized::DateV2ValueType>>
+                     ? PrimitiveType::TYPE_DATEV2
+                     : PrimitiveType::TYPE_DATETIMEV2);
+    auto start_value =
+            binary_cast<FROM_TYPE, TO_TYPE>(col->get_data()[row]); // get DateV2Value<xxx>
+    auto end_value = start_value;
+    vectorized::TimeUnit tu = vectorized::parse_upper_to_timeunit(interval_name);
+    (end_value.*end_calculator)(vectorized::TimeInterval {tu, 1, false});
+
+    TDateLiteral start_date, end_date;
+    start_value.to_string(convert_buffer);
+    start_date.__set_value(convert_buffer);
+    end_value.to_string(convert_buffer);
+    end_date.__set_value(convert_buffer);
+
+    TExprNode start_node, end_node;
+    start_node.__set_date_literal(start_date);
+    start_node.__set_node_type(TExprNodeType::DATE_LITERAL);
+    start_node.__set_type(create_type_desc(Value_Type));
+    end_node.__set_date_literal(end_date);
+    end_node.__set_node_type(TExprNodeType::DATE_LITERAL);
+    end_node.__set_type(create_type_desc(Value_Type));
+
+    TPartitionByRange partition_range;
+    partition_range.__set_start_key(start_node);
+    partition_range.__set_end_key(end_node);
+    _partitions_need_create.emplace_back(std::vector {partition_range}); // only 1 partition column
+}
+
 Status VOlapTableSink::send(RuntimeState* state, vectorized::Block* input_block, bool eos) {
     SCOPED_CONSUME_MEM_TRACKER(_mem_tracker.get());
     Status status = Status::OK();
@@ -1326,30 +1522,129 @@ Status VOlapTableSink::send(RuntimeState* state, vectorized::Block* input_block,
     _row_distribution_watch.start();
     auto num_rows = block->rows();
     size_t partition_num = _vpartition->get_partitions().size();
-    if (partition_num == 1 && _tablet_finder->is_find_tablet_every_sink()) {
+    if (!_vpartition->is_auto_partition() && partition_num == 1 &&
+        _tablet_finder->is_find_tablet_every_sink()) {
         RETURN_IF_ERROR(_single_partition_generate(state, block.get(), channel_to_payload, num_rows,
                                                    has_filtered_rows));
     } else {
-        for (int i = 0; i < num_rows; ++i) {
-            if (UNLIKELY(has_filtered_rows) && _block_convertor->filter_bitmap().Get(i)) {
-                continue;
+        if (_vpartition->is_auto_partition()) {
+            std::vector<uint16_t> partition_keys = _vpartition->get_partition_keys();
+            CHECK(partition_keys.size() == 1)
+                    << "now support only 1 partition column for auto partitions.";
+            auto partition_col = block->get_by_position(partition_keys[0]);
+            //TODO: check if we can put nullable check into datetype judge functions
+            CHECK(vectorized::is_date_v2_or_datetime_v2(partition_col.type) ||
+                  partition_col.type->is_nullable() &&
+                          vectorized::is_date_v2_or_datetime_v2(
+                                  static_cast<const vectorized::DataTypeNullable*>(
+                                          partition_col.type.get())
+                                          ->get_nested_type()))
+                    << "support only datev2/datetimev2 for auto partition column";
+
+            auto missing_vals_col = partition_col.clone_empty();
+
+            // try to find tablet and save missing value
+            for (int i = 0; i < num_rows; ++i) {
+                if (UNLIKELY(has_filtered_rows) && _block_convertor->filter_bitmap().Get(i)) {
+                    continue;
+                }
+                const VOlapTablePartition* partition = nullptr;
+                bool is_continue = false;
+                uint32_t tablet_index = 0;
+                bool missing_this = false;
+                RETURN_IF_ERROR(_tablet_finder->find_tablet(state, block.get(), i, &partition,
+                                                            tablet_index, stop_processing,
+                                                            is_continue, &missing_this));
+                if (missing_this) {
+                    missing_vals_col.column->assume_mutable()->insert_from(*partition_col.column,
+                                                                           i);
+                } else {
+                    _generate_row_distribution_payload(channel_to_payload, partition, tablet_index,
+                                                       i, 1);
+                }
             }
-            const VOlapTablePartition* partition = nullptr;
-            bool is_continue = false;
-            uint32_t tablet_index = 0;
-            RETURN_IF_ERROR(_tablet_finder->find_tablet(
-                    state, block.get(), i, &partition, tablet_index, stop_processing, is_continue));
-            if (is_continue) {
-                continue;
+
+            // for missing partition keys, calc the missing partition and save in _partitions_need_create
+            auto type = missing_vals_col.type;
+            auto size = missing_vals_col.column->size();
+            if (size > 0) {
+                std::string interval_str = _get_part_interval();
+                boost::to_upper(interval_str);
+                auto interval_col =
+                        vectorized::DataTypeString {}.create_column_const(size, interval_str);
+
+                vectorized::Block tmp_block = {
+                        missing_vals_col,
+                        vectorized::ColumnWithTypeAndName {
+                                interval_col,
+                                vectorized::DataTypeFactory::instance().create_data_type(
+                                        interval_col->get_data_type()),
+                                ""}};
+                auto [part_ctx, part_func] = _get_partition_function();
+                int result_idx;
+                // calc the start value of missing partition ranges.
+                part_func->prepare(_state, *_output_row_desc, part_ctx.get());
+                LOG(WARNING) << "\nzzz before calc " << tmp_block.dump_data();
+                part_func->execute(part_ctx.get(), &tmp_block, &result_idx);
+                LOG(WARNING) << "\nzzz after calc " << tmp_block.dump_data();
+
+                auto missing_partition = std::make_unique<std::vector<TPartitionByRange>>();
+
+                char convert_buffer[30];
+                // expose the data column
+                vectorized::ColumnPtr col = tmp_block.get_by_position(result_idx).column;
+                if (auto* nullable = check_and_get_column<vectorized::ColumnNullable>(*col)) {
+                    col = nullable->get_nested_column_ptr();
+                }
+                // calc the end value and save them.
+                if (type->get_type_id() == vectorized::TypeIndex::DateV2) {
+                    auto* arg_col = assert_cast<const vectorized::ColumnDateV2*>(col.get());
+                    auto calc_right_bound_func = get_partition_bound_function<
+                            vectorized::DateV2Value<vectorized::DateV2ValueType>>(interval_str);
+                    for (int row = 0; row < arg_col->size(); row++) {
+                        _calc_save_a_boundary<vectorized::DateV2Value<vectorized::DateV2ValueType>>(
+                                arg_col, row, calc_right_bound_func, interval_str, convert_buffer);
+                    }
+                } else /*DatetimeV2*/ {
+                    auto* arg_col = assert_cast<const vectorized::ColumnDateTimeV2*>(col.get());
+                    auto calc_right_bound_func = get_partition_bound_function<
+                            vectorized::DateV2Value<vectorized::DateTimeV2ValueType>>(interval_str);
+                    for (int row = 0; row < arg_col->size(); row++) {
+                        _calc_save_a_boundary<
+                                vectorized::DateV2Value<vectorized::DateTimeV2ValueType>>(
+                                arg_col, row, calc_right_bound_func, interval_str, convert_buffer);
+                    }
+                }
+                // then call FE to create it. then FragmentExecutor will redo the load.
+                _automatic_create_partition();
+                return Status::NeedSendAgain("");
+            } // done created
+
+        } else { // not auto partition
+            for (int i = 0; i < num_rows; ++i) {
+                if (UNLIKELY(has_filtered_rows) && _block_convertor->filter_bitmap().Get(i)) {
+                    continue;
+                }
+                const VOlapTablePartition* partition = nullptr;
+                bool is_continue = false;
+                uint32_t tablet_index = 0;
+                RETURN_IF_ERROR(_tablet_finder->find_tablet(state, block.get(), i, &partition,
+                                                            tablet_index, stop_processing,
+                                                            is_continue));
+                if (is_continue) {
+                    continue;
+                }
+                // each row
+                _generate_row_distribution_payload(channel_to_payload, partition, tablet_index, i,
+                                                   1);
             }
-            // each row
-            _generate_row_distribution_payload(channel_to_payload, partition, tablet_index, i, 1);
         }
     }
     _row_distribution_watch.stop();
     // Random distribution and the block belongs to a single tablet, we could optimize to append the whole
     // block into node channel.
-    bool load_block_to_single_tablet = _tablet_finder->is_single_tablet();
+    bool load_block_to_single_tablet = !_vpartition->is_auto_partition() &&
+                                       _tablet_finder->is_single_tablet();
     if (load_block_to_single_tablet) {
         SCOPED_RAW_TIMER(&_filter_ns);
         // Filter block
@@ -1496,44 +1791,43 @@ Status VOlapTableSink::close(RuntimeState* state, Status exec_status) {
                 total_wait_exec_time_ns = 0, max_wait_exec_time_ns = 0, total_add_batch_num = 0,
                 num_node_channels = 0;
         VNodeChannelStat channel_stat;
-        {
-            for (const auto& index_channel : _channels) {
-                if (!status.ok()) {
-                    break;
-                }
-                int64_t add_batch_exec_time = 0;
-                int64_t wait_exec_time = 0;
-                index_channel->for_each_node_channel(
-                        [this, &index_channel, &status, &state, &node_add_batch_counter_map,
-                         &serialize_batch_ns, &channel_stat, &queue_push_lock_ns,
-                         &actual_consume_ns, &total_add_batch_exec_time_ns, &add_batch_exec_time,
-                         &total_wait_exec_time_ns, &wait_exec_time,
-                         &total_add_batch_num](const std::shared_ptr<VNodeChannel>& ch) {
-                            if (!status.ok() || ch->is_closed()) {
-                                return;
-                            }
-                            // in pipeline, all node channels are done or canceled, will not block.
-                            // no pipeline, close may block waiting.
-                            auto s = ch->close_wait(state);
-                            if (!s.ok()) {
-                                status = this->_cancel_channel_and_check_intolerable_failure(
-                                        status, s.to_string(), index_channel, ch);
-                            }
-                            ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns,
-                                            &channel_stat, &queue_push_lock_ns, &actual_consume_ns,
-                                            &total_add_batch_exec_time_ns, &add_batch_exec_time,
-                                            &total_wait_exec_time_ns, &wait_exec_time,
-                                            &total_add_batch_num);
-                        });
-                num_node_channels += index_channel->num_node_channels();
-                if (add_batch_exec_time > max_add_batch_exec_time_ns) {
-                    max_add_batch_exec_time_ns = add_batch_exec_time;
-                }
-                if (wait_exec_time > max_wait_exec_time_ns) {
-                    max_wait_exec_time_ns = wait_exec_time;
-                }
-            } // end for index channels
-        }
+
+        for (const auto& index_channel : _channels) {
+            if (!status.ok()) {
+                break;
+            }
+            int64_t add_batch_exec_time = 0;
+            int64_t wait_exec_time = 0;
+            index_channel->for_each_node_channel(
+                    [this, &index_channel, &status, &state, &node_add_batch_counter_map,
+                     &serialize_batch_ns, &channel_stat, &queue_push_lock_ns, &actual_consume_ns,
+                     &total_add_batch_exec_time_ns, &add_batch_exec_time, &total_wait_exec_time_ns,
+                     &wait_exec_time,
+                     &total_add_batch_num](const std::shared_ptr<VNodeChannel>& ch) {
+                        if (!status.ok() || ch->is_closed()) {
+                            return;
+                        }
+                        // in pipeline, all node channels are done or canceled, will not block.
+                        // no pipeline, close may block waiting.
+                        auto s = ch->close_wait(state);
+                        if (!s.ok()) {
+                            status = this->_cancel_channel_and_check_intolerable_failure(
+                                    status, s.to_string(), index_channel, ch);
+                        }
+                        ch->time_report(&node_add_batch_counter_map, &serialize_batch_ns,
+                                        &channel_stat, &queue_push_lock_ns, &actual_consume_ns,
+                                        &total_add_batch_exec_time_ns, &add_batch_exec_time,
+                                        &total_wait_exec_time_ns, &wait_exec_time,
+                                        &total_add_batch_num);
+                    });
+            num_node_channels += index_channel->num_node_channels();
+            if (add_batch_exec_time > max_add_batch_exec_time_ns) {
+                max_add_batch_exec_time_ns = add_batch_exec_time;
+            }
+            if (wait_exec_time > max_wait_exec_time_ns) {
+                max_wait_exec_time_ns = wait_exec_time;
+            }
+        } // end for index channels
 
         if (status.ok()) {
             // TODO need to be improved

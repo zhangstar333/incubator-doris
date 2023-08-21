@@ -118,6 +118,68 @@ Status TabletsChannel::open(const PTabletWriterOpenRequest& request) {
     return Status::OK();
 }
 
+Status TabletsChannel::incremental_open(const PTabletWriterOpenRequest& params) {
+    std::lock_guard<std::mutex> l(_lock);
+    std::vector<SlotDescriptor*>* index_slots = nullptr;
+    int32_t schema_hash = 0;
+    for (auto& index : _schema->indexes()) {
+        if (index->index_id == _index_id) {
+            index_slots = &index->slots;
+            schema_hash = index->schema_hash;
+            break;
+        }
+    }
+    if (index_slots == nullptr) {
+        Status::InternalError("unknown index id, key={}", _key.to_string());
+    }
+    // update tablets
+    std::vector<int64_t> tablet_ids;
+    tablet_ids.reserve(params.tablets_size());
+    size_t incremental_tablet_num = 0;
+    std::stringstream ss;
+    ss << "LocalTabletsChannel txn_id: " << _txn_id << " load_id: " << print_id(params.id())
+       << " incremental open delta writer: ";
+
+    for (auto& tablet : params.tablets()) {
+        if (_tablet_writers.find(tablet.tablet_id()) != _tablet_writers.end()) {
+            continue;
+        }
+        incremental_tablet_num++;
+
+        WriteRequest wrequest;
+        wrequest.index_id = params.index_id();
+        wrequest.tablet_id = tablet.tablet_id();
+        wrequest.schema_hash = schema_hash;
+        wrequest.txn_id = _txn_id;
+        wrequest.partition_id = tablet.partition_id();
+        wrequest.load_id = params.id();
+        wrequest.tuple_desc = _tuple_desc;
+        wrequest.slots = index_slots;
+        wrequest.is_high_priority = _is_high_priority;
+        wrequest.table_schema_param = _schema;
+
+        DeltaWriter* writer = nullptr;
+        auto st = DeltaWriter::open(&wrequest, &writer, _profile, _load_id);
+        if (!st.ok()) {
+            auto err_msg = fmt::format(
+                    "open delta writer failed, tablet_id={}"
+                    ", txn_id={}, partition_id={}, err={}",
+                    tablet.tablet_id(), _txn_id, tablet.partition_id(), st.to_string());
+            LOG(WARNING) << err_msg;
+            return Status::InternalError(err_msg);
+        }
+        ss << "[" << tablet.tablet_id() << "]";
+        {
+            std::lock_guard<SpinLock> l(_tablet_writers_lock);
+            _tablet_writers.emplace(tablet.tablet_id(), writer);
+        }
+    }
+
+    _s_tablet_writer_count += incremental_tablet_num;
+    LOG(INFO) << ss.str();
+    return Status::OK();
+}
+
 Status TabletsChannel::close(
         LoadChannel* parent, int sender_id, int64_t backend_id, bool* finished,
         const google::protobuf::RepeatedField<int64_t>& partition_ids,
@@ -280,7 +342,7 @@ void TabletsChannel::_commit_txn(DeltaWriter* writer,
 
 void TabletsChannel::_add_error_tablet(
         google::protobuf::RepeatedPtrField<PTabletError>* tablet_errors, int64_t tablet_id,
-        Status error) {
+        Status error) const {
     PTabletError* tablet_error = tablet_errors->Add();
     tablet_error->set_tablet_id(tablet_id);
     tablet_error->set_msg(error.to_string());
@@ -301,10 +363,15 @@ void TabletsChannel::refresh_profile() {
             write_mem_usage += write_mem;
             int64_t flush_mem = it.second->mem_consumption(MemType::FLUSH);
             flush_mem_usage += flush_mem;
-            if (write_mem > max_tablet_write_mem_usage) max_tablet_write_mem_usage = write_mem;
-            if (flush_mem > max_tablet_flush_mem_usage) max_tablet_flush_mem_usage = flush_mem;
-            if (write_mem + flush_mem > max_tablet_mem_usage)
+            if (write_mem > max_tablet_write_mem_usage) {
+                max_tablet_write_mem_usage = write_mem;
+            }
+            if (flush_mem > max_tablet_flush_mem_usage) {
+                max_tablet_flush_mem_usage = flush_mem;
+            }
+            if (write_mem + flush_mem > max_tablet_mem_usage) {
                 max_tablet_mem_usage = write_mem + flush_mem;
+            }
         }
     }
     COUNTER_SET(_memory_usage_counter, write_mem_usage + flush_mem_usage);

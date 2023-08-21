@@ -20,6 +20,8 @@
 #include <bthread/types.h>
 #include <butil/errno.h>
 #include <fmt/format.h>
+#include <gen_cpp/FrontendService.h>
+#include <gen_cpp/FrontendService_types.h>
 #include <gen_cpp/PaloInternalService_types.h>
 #include <gen_cpp/Types_types.h>
 #include <gen_cpp/internal_service.pb.h>
@@ -213,7 +215,8 @@ public:
 
 class VNodeChannel {
 public:
-    VNodeChannel(VOlapTableSink* parent, IndexChannel* index_channel, int64_t node_id);
+    VNodeChannel(VOlapTableSink* parent, IndexChannel* index_channel, int64_t node_id,
+                 bool is_incremental = false);
 
     ~VNodeChannel();
 
@@ -225,6 +228,7 @@ public:
     }
 
     void open();
+    void incremental_open();
 
     Status init(RuntimeState* state);
 
@@ -299,7 +303,12 @@ public:
 
     size_t get_pending_bytes() { return _pending_batches_bytes; }
 
+    bool is_incremental() const { return _is_incremental; }
+
 protected:
+    void _open_internal(RefCountClosure<PTabletWriterOpenResult>* open_closure,
+                        bool is_incremental);
+
     void _close_check();
     void _cancel_with_msg(const std::string& msg);
 
@@ -345,7 +354,7 @@ protected:
     std::atomic<int> _pending_batches_num {0}; // reuse for vectorized
 
     std::shared_ptr<PBackendService_Stub> _stub = nullptr;
-    RefCountClosure<PTabletWriterOpenResult>* _open_closure = nullptr;
+    std::vector<RefCountClosure<PTabletWriterOpenResult>*> _open_closures;
 
     std::vector<TTabletWithPartition> _all_tablets;
     // map from tablet_id to node_id where slave replicas locate in
@@ -380,6 +389,8 @@ protected:
             std::pair<std::unique_ptr<vectorized::MutableBlock>, PTabletWriterAddBlockRequest>;
     std::queue<AddBlockReq> _pending_blocks;
     ReusableClosure<PTabletWriterAddBlockResult>* _add_block_closure = nullptr;
+
+    bool _is_incremental;
 };
 
 // Write block data to Olap Table.
@@ -436,6 +447,21 @@ private:
 
     void _cancel_all_channel(Status status);
 
+    std::pair<vectorized::VExprContextSPtr, vectorized::VExprSPtr> _get_partition_function();
+
+    std::string _get_part_interval();
+
+    template <typename TO_TYPE>
+        requires(std::is_same_v<TO_TYPE, vectorized::DateV2Value<vectorized::DateV2ValueType>> ||
+                 std::is_same_v<TO_TYPE, vectorized::DateV2Value<vectorized::DateTimeV2ValueType>>)
+    void _calc_save_a_boundary(auto* col, int row, auto end_calculator,
+                               const std::string& interval_name, char* convert_buffer);
+
+    // create partitions when need for auto-partition table using #_partitions_need_create.
+    Status _automatic_create_partition();
+
+    Status _incremental_open_node_channel(const std::vector<TOlapTablePartition>& partitions);
+
     std::shared_ptr<MemTracker> _mem_tracker;
 
     ObjectPool* _pool;
@@ -473,6 +499,9 @@ private:
 
     bthread_t _sender_thread = 0;
     std::unique_ptr<ThreadPoolToken> _send_batch_thread_pool_token;
+
+    // support only one partition column now
+    std::vector<std::vector<TPartitionByRange>> _partitions_need_create;
 
     std::unique_ptr<OlapTableBlockConvertor> _block_convertor;
     // Stats for this

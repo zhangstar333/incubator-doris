@@ -36,8 +36,9 @@
 #include "runtime/types.h"
 #include "util/hash_util.hpp"
 #include "util/string_parser.hpp"
+#include "vec/common/assert_cast.h"
 #include "vec/common/string_ref.h"
-#include "vec/exprs/vexpr.h"
+#include "vec/exprs/vliteral.h"
 #include "vec/runtime/vdatetime_value.h"
 
 namespace doris {
@@ -212,6 +213,17 @@ VOlapTablePartitionParam::VOlapTablePartitionParam(std::shared_ptr<OlapTableSche
         _partition_block.insert(
                 {slot->get_empty_mutable_column(), slot->get_data_type_ptr(), slot->col_name()});
     }
+
+    if (t_param.__isset.enable_automatic_partition && t_param.enable_automatic_partition) {
+        _is_auto_partiton = true;
+
+        vectorized::VExpr::create_expr_tree(t_param.partition_function_exprs[0],
+                                            _part_func_ctx); //RETURN IF ERROR
+        _partition_function = _part_func_ctx->root();
+        _part_interval =
+                assert_cast<vectorized::VLiteral*>(_part_func_ctx->root()->get_child(1).get())
+                        ->value();
+    }
 }
 
 VOlapTablePartitionParam::~VOlapTablePartitionParam() {
@@ -271,60 +283,14 @@ Status VOlapTablePartitionParam::init() {
         };
     }
 
-    // DCHECK(!_t_param.partitions.empty()) << "must have at least 1 partition";
-    // _is_in_partition = _t_param.partitions[0].__isset.in_keys;
+    // empty for auto partition table. checked in caller.
+    _is_in_partition = _t_param.partitions.empty() ? false : _t_param.partitions[0].__isset.in_keys;
 
     // initial partitions
     for (int i = 0; i < _t_param.partitions.size(); ++i) {
         const TOlapTablePartition& t_part = _t_param.partitions[i];
-        auto part = _obj_pool.add(new VOlapTablePartition(&_partition_block));
-        part->id = t_part.id;
-        part->is_mutable = t_part.is_mutable;
-
-        if (!_is_in_partition) {
-            if (t_part.__isset.start_keys) {
-                RETURN_IF_ERROR(_create_partition_keys(t_part.start_keys, &part->start_key));
-            }
-
-            if (t_part.__isset.end_keys) {
-                RETURN_IF_ERROR(_create_partition_keys(t_part.end_keys, &part->end_key));
-            }
-        } else {
-            for (const auto& keys : t_part.in_keys) {
-                RETURN_IF_ERROR(_create_partition_keys(
-                        keys, &part->in_keys.emplace_back(&_partition_block, -1)));
-            }
-            if (t_part.__isset.is_default_partition && t_part.is_default_partition) {
-                _default_partition = part;
-            }
-        }
-
-        part->num_buckets = t_part.num_buckets;
-        auto num_indexes = _schema->indexes().size();
-        if (t_part.indexes.size() != num_indexes) {
-            return Status::InternalError(
-                    "number of partition's index is not equal with schema's"
-                    ", num_part_indexes={}, num_schema_indexes={}",
-                    t_part.indexes.size(), num_indexes);
-        }
-        part->indexes = t_part.indexes;
-        std::sort(part->indexes.begin(), part->indexes.end(),
-                  [](const OlapTableIndexTablets& lhs, const OlapTableIndexTablets& rhs) {
-                      return lhs.index_id < rhs.index_id;
-                  });
-        // check index
-        for (int j = 0; j < num_indexes; ++j) {
-            if (part->indexes[j].index_id != _schema->indexes()[j]->index_id) {
-                std::stringstream ss;
-                ss << "partition's index is not equal with schema's"
-                   << ", part_index=" << part->indexes[j].index_id
-                   << ", schema_index=" << _schema->indexes()[j]->index_id;
-                return Status::InternalError(
-                        "partition's index is not equal with schema's"
-                        ", part_index={}, schema_index={}",
-                        part->indexes[j].index_id, _schema->indexes()[j]->index_id);
-            }
-        }
+        VOlapTablePartition* part = nullptr;
+        RETURN_IF_ERROR(generate_partition_from(t_part, part));
         _partitions.emplace_back(part);
         if (_is_in_partition) {
             for (auto& in_key : part->in_keys) {
@@ -364,6 +330,60 @@ Status VOlapTablePartitionParam::_create_partition_keys(const std::vector<TExprN
                                                         BlockRow* part_key) {
     for (int i = 0; i < t_exprs.size(); i++) {
         RETURN_IF_ERROR(_create_partition_key(t_exprs[i], part_key, _partition_slot_locs[i]));
+    }
+    return Status::OK();
+}
+
+Status VOlapTablePartitionParam::generate_partition_from(const TOlapTablePartition& t_part,
+                                                         VOlapTablePartition*& part_result) {
+    DCHECK(part_result == nullptr);
+    part_result = _obj_pool.add(new VOlapTablePartition(&_partition_block));
+    part_result->id = t_part.id;
+    part_result->is_mutable = t_part.is_mutable;
+
+    if (!_is_in_partition) {
+        if (t_part.__isset.start_keys) {
+            RETURN_IF_ERROR(_create_partition_keys(t_part.start_keys, &part_result->start_key));
+        }
+
+        if (t_part.__isset.end_keys) {
+            RETURN_IF_ERROR(_create_partition_keys(t_part.end_keys, &part_result->end_key));
+        }
+    } else {
+        for (const auto& keys : t_part.in_keys) {
+            RETURN_IF_ERROR(_create_partition_keys(
+                    keys, &part_result->in_keys.emplace_back(&_partition_block, -1)));
+        }
+        if (t_part.__isset.is_default_partition && t_part.is_default_partition) {
+            _default_partition = part_result;
+        }
+    }
+
+    part_result->num_buckets = t_part.num_buckets;
+    auto num_indexes = _schema->indexes().size();
+    if (t_part.indexes.size() != num_indexes) {
+        return Status::InternalError(
+                "number of partition's index is not equal with schema's"
+                ", num_part_indexes={}, num_schema_indexes={}",
+                t_part.indexes.size(), num_indexes);
+    }
+    part_result->indexes = t_part.indexes;
+    std::sort(part_result->indexes.begin(), part_result->indexes.end(),
+              [](const OlapTableIndexTablets& lhs, const OlapTableIndexTablets& rhs) {
+                  return lhs.index_id < rhs.index_id;
+              });
+    // check index
+    for (int j = 0; j < num_indexes; ++j) {
+        if (part_result->indexes[j].index_id != _schema->indexes()[j]->index_id) {
+            std::stringstream ss;
+            ss << "partition's index is not equal with schema's"
+               << ", part_index=" << part_result->indexes[j].index_id
+               << ", schema_index=" << _schema->indexes()[j]->index_id;
+            return Status::InternalError(
+                    "partition's index is not equal with schema's"
+                    ", part_index={}, schema_index={}",
+                    part_result->indexes[j].index_id, _schema->indexes()[j]->index_id);
+        }
     }
     return Status::OK();
 }
@@ -453,6 +473,56 @@ Status VOlapTablePartitionParam::_create_partition_key(const TExprNode& t_expr, 
     }
     }
     part_key->second = column->size() - 1;
+    return Status::OK();
+}
+
+Status VOlapTablePartitionParam::add_partitions(
+        const std::vector<TOlapTablePartition>& partitions) {
+    for (const auto& t_part : partitions) {
+        auto part = _obj_pool.add(new VOlapTablePartition(&_partition_block));
+        part->id = t_part.id;
+        part->is_mutable = t_part.is_mutable;
+
+        // for auto partitions, so range partition only
+        if (t_part.__isset.start_keys) {
+            RETURN_IF_ERROR(_create_partition_keys(t_part.start_keys, &part->start_key));
+        }
+        if (t_part.__isset.end_keys) {
+            RETURN_IF_ERROR(_create_partition_keys(t_part.end_keys, &part->end_key));
+        }
+
+        part->num_buckets = t_part.num_buckets;
+        auto num_indexes = _schema->indexes().size();
+        if (t_part.indexes.size() != num_indexes) {
+            return Status::InternalError(
+                    "number of partition's index is not equal with schema's"
+                    ", num_part_indexes={}, num_schema_indexes={}",
+                    t_part.indexes.size(), num_indexes);
+        }
+        part->indexes = t_part.indexes;
+        std::sort(part->indexes.begin(), part->indexes.end(),
+                  [](const OlapTableIndexTablets& lhs, const OlapTableIndexTablets& rhs) {
+                      return lhs.index_id < rhs.index_id;
+                  });
+        // check index
+        for (int j = 0; j < num_indexes; ++j) {
+            if (part->indexes[j].index_id != _schema->indexes()[j]->index_id) {
+                std::stringstream ss;
+                ss << "partition's index is not equal with schema's"
+                   << ", part_index=" << part->indexes[j].index_id
+                   << ", schema_index=" << _schema->indexes()[j]->index_id;
+                return Status::InternalError(
+                        "partition's index is not equal with schema's"
+                        ", part_index={}, schema_index={}",
+                        part->indexes[j].index_id, _schema->indexes()[j]->index_id);
+            }
+        }
+        _partitions.emplace_back(part);
+        for (auto& in_key : part->in_keys) {
+            _partitions_map->emplace(&in_key, part);
+        }
+    }
+
     return Status::OK();
 }
 

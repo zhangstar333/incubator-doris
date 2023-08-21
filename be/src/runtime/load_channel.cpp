@@ -69,13 +69,19 @@ void LoadChannel::_init_profile() {
 Status LoadChannel::open(const PTabletWriterOpenRequest& params) {
     int64_t index_id = params.index_id();
     std::shared_ptr<TabletsChannel> channel;
+    bool inc_open = false;
     {
         std::lock_guard<std::mutex> l(_lock);
         auto it = _tablets_channels.find(index_id);
         if (it != _tablets_channels.end()) {
             channel = it->second;
+            // already exist. incrementally open.
+            if (params.is_incremental()) {
+                inc_open = true;
+            }
+            //TODO: should we check not to open again if not incremantal?
         } else {
-            // create a new tablets channel
+            // create a new tablets channel and open it
             TabletsChannelKey key(params.id(), index_id);
             channel = std::make_shared<TabletsChannel>(key, _load_id, _is_high_priority,
                                                        _self_profile);
@@ -86,7 +92,11 @@ Status LoadChannel::open(const PTabletWriterOpenRequest& params) {
         }
     }
 
-    RETURN_IF_ERROR(channel->open(params));
+    if (inc_open) {
+        RETURN_IF_ERROR(channel->incremental_open(params));
+    } else {
+        RETURN_IF_ERROR(channel->open(params));
+    }
 
     _opened = true;
     _last_updated_time.store(time(nullptr));

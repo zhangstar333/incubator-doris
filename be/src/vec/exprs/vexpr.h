@@ -89,6 +89,7 @@ public:
     ///
     /// Subclasses overriding this function should call VExpr::Prepare() to recursively call
     /// Prepare() on the expr tree
+    /// row_desc used in vslot_ref and some subclass to specify column
     virtual Status prepare(RuntimeState* state, const RowDescriptor& row_desc,
                            VExprContext* context);
 

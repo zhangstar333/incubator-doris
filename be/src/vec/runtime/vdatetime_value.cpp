@@ -50,6 +50,29 @@ static const char* s_ab_month_name[] = {"",    "Jan", "Feb", "Mar", "Apr", "May"
 
 static const char* s_ab_day_name[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", nullptr};
 
+TimeUnit parse_upper_to_timeunit(const std::string& str) {
+    if (str == "MICROSECOND") {
+        return TimeUnit::MICROSECOND;
+    } else if (str == "SECOND") {
+        return TimeUnit::SECOND;
+    } else if (str == "MINUTE") {
+        return TimeUnit::MINUTE;
+    } else if (str == "HOUR") {
+        return TimeUnit::HOUR;
+    } else if (str == "DAY") {
+        return TimeUnit::DAY;
+    } else if (str == "WEEK") {
+        return TimeUnit::WEEK;
+    } else if (str == "MONTH") {
+        return TimeUnit::MONTH;
+    } else if (str == "QUARTER") {
+        return TimeUnit::QUARTER;
+    } else if (str == "YEAR") {
+        return TimeUnit::YEAR;
+    }
+    throw std::invalid_argument("Unknown TimeUnit" + str);
+}
+
 uint8_t mysql_week_mode(uint32_t mode) {
     mode &= 7;
     if (!(mode & WEEK_MONDAY_FIRST)) {

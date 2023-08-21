@@ -91,6 +91,8 @@ public:
 
     Status open(const PTabletWriterOpenRequest& request);
 
+    Status incremental_open(const PTabletWriterOpenRequest& params);
+
     // no-op when this channel has been closed or cancelled
     Status add_batch(const PTabletWriterAddBlockRequest& request,
                      PTabletWriterAddBlockResult* response);
@@ -128,7 +130,7 @@ private:
 
     void _add_broken_tablet(int64_t tablet_id);
     void _add_error_tablet(google::protobuf::RepeatedPtrField<PTabletError>* tablet_errors,
-                           int64_t tablet_id, Status error);
+                           int64_t tablet_id, Status error) const;
     bool _is_broken_tablet(int64_t tablet_id);
     void _init_profile(RuntimeProfile* profile);
 
