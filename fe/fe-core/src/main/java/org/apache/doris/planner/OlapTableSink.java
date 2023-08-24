@@ -63,6 +63,7 @@ import org.apache.doris.thrift.TOlapTablePartitionParam;
 import org.apache.doris.thrift.TOlapTableSchemaParam;
 import org.apache.doris.thrift.TOlapTableSink;
 import org.apache.doris.thrift.TPaloNodesInfo;
+import org.apache.doris.thrift.TPartitionType;
 import org.apache.doris.thrift.TStorageFormat;
 import org.apache.doris.thrift.TTabletLocation;
 import org.apache.doris.thrift.TUniqueId;
@@ -352,6 +353,7 @@ public class OlapTableSink extends DataSink {
                     partitionParam.setPartitionFunctionExprs(Expr.treesToThrift(exprs));
                 }
                 partitionParam.setEnableAutomaticPartition(partitionInfo.enableAutomaticPartition());
+                partitionParam.setIntervalIndexs(partitionInfo.getPartitionInterValIndexs());
                 break;
             }
             case UNPARTITIONED: {
@@ -372,12 +374,14 @@ public class OlapTableSink extends DataSink {
                 }
                 partitionParam.addToPartitions(tPartition);
                 partitionParam.setDistributedColumns(getDistColumns(partition.getDistributionInfo()));
+                partitionParam.setEnableAutomaticPartition(false);
                 break;
             }
             default: {
                 throw new UserException("unsupported partition for OlapTable, partition=" + partType);
             }
         }
+        partitionParam.setPartitionType(partType.toThrift());
         return partitionParam;
     }
 

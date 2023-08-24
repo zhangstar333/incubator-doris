@@ -19,6 +19,7 @@ package org.apache.doris.catalog;
 
 import org.apache.doris.analysis.DateLiteral;
 import org.apache.doris.analysis.Expr;
+import org.apache.doris.analysis.FunctionCallExpr;
 import org.apache.doris.analysis.MaxLiteral;
 import org.apache.doris.analysis.PartitionDesc;
 import org.apache.doris.analysis.PartitionValue;
@@ -230,6 +231,22 @@ public class PartitionInfo implements Writable {
 
     public List<Expr> getPartitionExprs() {
         return this.partitionExprs;
+    }
+
+    // eg: date_trunc(column, "day"), BE need the "day" position in function to get
+    // end range.
+    public List<Integer> getPartitionInterValIndexs() {
+        List<Integer> indexs = new ArrayList<Integer>();
+        for (Expr e : this.partitionExprs) {
+            if (type == PartitionType.RANGE && e instanceof FunctionCallExpr) {
+                String name = ((FunctionCallExpr) e).getFnName().getFunction();
+                if (name.equalsIgnoreCase("date_trunc") ||
+                        name.equalsIgnoreCase("date_floor") ||
+                        name.equalsIgnoreCase("date_ceil"))
+                    indexs.add(1);
+            }
+        }
+        return indexs;
     }
 
     public void checkPartitionItemListsMatch(List<PartitionItem> list1, List<PartitionItem> list2) throws DdlException {
