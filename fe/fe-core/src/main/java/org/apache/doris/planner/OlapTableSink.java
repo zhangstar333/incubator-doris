@@ -343,7 +343,7 @@ public class OlapTableSink extends DataSink {
                 if (partitionIds.isEmpty()) {
                     partitionParam.setPartitions(new ArrayList<TOlapTablePartition>());
                 }
-                List<Expr> exprs = partitionInfo.getPartitionExprs();
+                ArrayList<Expr> exprs = partitionInfo.getPartitionExprs();
                 if (exprs != null && analyzer != null) {
                     tupleDescriptor.setTable(table);
                     analyzer.registerTupleDescriptor(tupleDescriptor);
@@ -353,7 +353,6 @@ public class OlapTableSink extends DataSink {
                     partitionParam.setPartitionFunctionExprs(Expr.treesToThrift(exprs));
                 }
                 partitionParam.setEnableAutomaticPartition(partitionInfo.enableAutomaticPartition());
-                partitionParam.setIntervalIndexs(partitionInfo.getPartitionInterValIndexs());
                 break;
             }
             case UNPARTITIONED: {

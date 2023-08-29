@@ -229,24 +229,8 @@ public class PartitionInfo implements Writable {
         return Config.enable_auto_create_partition && (!this.partitionExprs.isEmpty());
     }
 
-    public List<Expr> getPartitionExprs() {
+    public ArrayList<Expr> getPartitionExprs() {
         return this.partitionExprs;
-    }
-
-    // eg: date_trunc(column, "day"), BE need the "day" position in function to get
-    // end range.
-    public List<Integer> getPartitionInterValIndexs() {
-        List<Integer> indexs = new ArrayList<Integer>();
-        for (Expr e : this.partitionExprs) {
-            if (type == PartitionType.RANGE && e instanceof FunctionCallExpr) {
-                String name = ((FunctionCallExpr) e).getFnName().getFunction();
-                if (name.equalsIgnoreCase("date_trunc") ||
-                        name.equalsIgnoreCase("date_floor") ||
-                        name.equalsIgnoreCase("date_ceil"))
-                    indexs.add(1);
-            }
-        }
-        return indexs;
     }
 
     public void checkPartitionItemListsMatch(List<PartitionItem> list1, List<PartitionItem> list2) throws DdlException {

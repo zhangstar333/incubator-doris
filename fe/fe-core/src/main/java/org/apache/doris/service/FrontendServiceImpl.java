@@ -22,6 +22,7 @@ import org.apache.doris.analysis.AddColumnsClause;
 import org.apache.doris.analysis.AddPartitionClause;
 import org.apache.doris.analysis.Analyzer;
 import org.apache.doris.analysis.ColumnDef;
+import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.InsertStmt;
 import org.apache.doris.analysis.LabelName;
 import org.apache.doris.analysis.PartitionExprUtil;
@@ -2916,12 +2917,12 @@ public class FrontendServiceImpl implements FrontendService.Iface {
 
         OlapTable olapTable = (OlapTable) table;
         PartitionInfo partitionInfo = olapTable.getPartitionInfo(); 
+        ArrayList<Expr> partitionExprs = partitionInfo.getPartitionExprs();
         List<TPartitionByRange> partitionValues = request.partitionValues.get(0);
         Map<String, AddPartitionClause> addPartitionClauseMap;
-
         try {
             addPartitionClauseMap = PartitionExprUtil.getAddPartitionClauseFromPartitionValues(olapTable,
-                    partitionValues, partitionInfo.getType());
+                    partitionValues, partitionExprs, partitionInfo.getType());
         } catch (AnalysisException ex) {
             errorStatus.setErrorMsgs(Lists.newArrayList(ex.getMessage()));
             result.setStatus(errorStatus);
