@@ -63,7 +63,6 @@ import org.apache.doris.thrift.TOlapTablePartitionParam;
 import org.apache.doris.thrift.TOlapTableSchemaParam;
 import org.apache.doris.thrift.TOlapTableSink;
 import org.apache.doris.thrift.TPaloNodesInfo;
-import org.apache.doris.thrift.TPartitionType;
 import org.apache.doris.thrift.TStorageFormat;
 import org.apache.doris.thrift.TTabletLocation;
 import org.apache.doris.thrift.TUniqueId;
@@ -294,7 +293,8 @@ public class OlapTableSink extends DataSink {
         return distColumns;
     }
 
-    private TOlapTablePartitionParam createPartition(long dbId, OlapTable table, Analyzer analyzer) throws UserException {
+    private TOlapTablePartitionParam createPartition(long dbId, OlapTable table, Analyzer analyzer)
+            throws UserException {
         TOlapTablePartitionParam partitionParam = new TOlapTablePartitionParam();
         partitionParam.setDbId(dbId);
         partitionParam.setTableId(table.getId());
@@ -338,7 +338,7 @@ public class OlapTableSink extends DataSink {
                         }
                     }
                 }
-                // for auto create partition by function expr, there is no any partition firstly, 
+                // for auto create partition by function expr, there is no any partition firstly,
                 // But this is required in thrift struct.
                 if (partitionIds.isEmpty()) {
                     partitionParam.setPartitions(new ArrayList<TOlapTablePartition>());
@@ -347,7 +347,7 @@ public class OlapTableSink extends DataSink {
                 if (exprs != null && analyzer != null) {
                     tupleDescriptor.setTable(table);
                     analyzer.registerTupleDescriptor(tupleDescriptor);
-                    for(Expr e : exprs) {
+                    for (Expr e : exprs) {
                         e.analyze(analyzer);
                     }
                     partitionParam.setPartitionFunctionExprs(Expr.treesToThrift(exprs));

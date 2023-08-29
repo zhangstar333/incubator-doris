@@ -39,7 +39,8 @@ public class ListPartitionDesc extends PartitionDesc {
         type = PartitionType.LIST;
     }
 
-    public ListPartitionDesc(ArrayList<Expr> exprs, List<String> partitionColNames, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+    public ListPartitionDesc(ArrayList<Expr> exprs, List<String> partitionColNames,
+            List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
         if (exprs != null) {
             this.partitionExprs = exprs;
         }
@@ -48,7 +49,8 @@ public class ListPartitionDesc extends PartitionDesc {
         this.type = PartitionType.LIST;
     }
 
-    public static ListPartitionDesc createListPartitionDesc(ArrayList<Expr> exprs, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+    public static ListPartitionDesc createListPartitionDesc(ArrayList<Expr> exprs,
+            List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
         List<String> colNames = getColNamesFromExpr(exprs);
         if (Config.enable_auto_create_partition) {
             return new ListPartitionDesc(exprs, colNames, allPartitionDescs);

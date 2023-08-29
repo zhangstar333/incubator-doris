@@ -35,7 +35,6 @@ import org.apache.doris.thrift.TPartitionByRange;
 import org.apache.doris.thrift.TStatusCode;
 import org.apache.doris.utframe.UtFrameUtils;
 
-import com.clearspring.analytics.util.Lists;
 import mockit.Mocked;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -44,18 +43,17 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 public class FrontendServiceImplTest {
     private static String runningDir = "fe/mocked/FrontendServiceImplTest/" + UUID.randomUUID().toString() + "/";
-
-    @Mocked
-    ExecuteEnv exeEnv;
-
     private static ConnectContext connectContext;
     @Rule
     public ExpectedException expectedException = ExpectedException.none();
+    @Mocked
+    ExecuteEnv exeEnv;
 
     @BeforeClass
     public static void beforeClass() throws Exception {
@@ -63,7 +61,7 @@ public class FrontendServiceImplTest {
         FeConstants.default_scheduler_interval_millisecond = 100;
         Config.dynamic_partition_enable = true;
         Config.dynamic_partition_check_interval_seconds = 1;
-        Config.enable_auto_create_partition=true;
+        Config.enable_auto_create_partition = true;
         UtFrameUtils.createDorisCluster(runningDir);
         // create connect context
         connectContext = UtFrameUtils.createDefaultCtx();
@@ -102,8 +100,8 @@ public class FrontendServiceImplTest {
         Database db = Env.getCurrentInternalCatalog().getDbOrAnalysisException("default_cluster:test");
         OlapTable table = (OlapTable) db.getTableOrAnalysisException("partition_range");
 
-        List<List<TPartitionByRange>> partitionValues = Lists.newArrayList();
-        List<TPartitionByRange> values = Lists.newArrayList();
+        List<List<TPartitionByRange>> partitionValues = new ArrayList<>();
+        List<TPartitionByRange> values = new ArrayList<>();
         TPartitionByRange range = new TPartitionByRange();
 
         TExprNode start = new TExprNode();
@@ -149,8 +147,8 @@ public class FrontendServiceImplTest {
         Database db = Env.getCurrentInternalCatalog().getDbOrAnalysisException("default_cluster:test");
         OlapTable table = (OlapTable) db.getTableOrAnalysisException("partition_list");
 
-        List<List<TPartitionByRange>> partitionValues = Lists.newArrayList();
-        List<TPartitionByRange> values = Lists.newArrayList();
+        List<List<TPartitionByRange>> partitionValues = new ArrayList<>();
+        List<TPartitionByRange> values = new ArrayList<>();
         TPartitionByRange range = new TPartitionByRange();
 
         TExprNode start = new TExprNode();
@@ -177,5 +175,4 @@ public class FrontendServiceImplTest {
         Partition pbeijing = table.getPartition("pBEIJING");
         Assert.assertNotNull(pbeijing);
     }
-
 }

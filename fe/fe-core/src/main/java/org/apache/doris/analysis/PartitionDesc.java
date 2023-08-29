@@ -51,8 +51,8 @@ public class PartitionDesc {
         this.singlePartitionDescs = handleAllPartitionDesc(allPartitionDescs);
     }
 
-    public List<SinglePartitionDesc> handleAllPartitionDesc(List<AllPartitionDesc> allPartitionDescs) 
-        throws AnalysisException {
+    public List<SinglePartitionDesc> handleAllPartitionDesc(List<AllPartitionDesc> allPartitionDescs)
+            throws AnalysisException {
         boolean isMultiPartition = false;
         List<SinglePartitionDesc> tmpList = Lists.newArrayList();
         if (allPartitionDescs != null) {
@@ -72,7 +72,7 @@ public class PartitionDesc {
                     + partitionColNames.size() + ".");
         }
         return tmpList;
-    }   
+    }
 
     public List<SinglePartitionDesc> getSinglePartitionDescs() {
         return this.singlePartitionDescs;
@@ -97,7 +97,7 @@ public class PartitionDesc {
             if (expr instanceof FunctionCallExpr) {
                 FunctionCallExpr functionCallExpr = (FunctionCallExpr) expr;
                 List<Expr> paramsExpr = functionCallExpr.getParams().exprs();
-                for (Expr param: paramsExpr) {
+                for (Expr param : paramsExpr) {
                     if (param instanceof SlotRef) {
                         colNames.add(((SlotRef) param).getColumnName());
                     }
@@ -106,14 +106,14 @@ public class PartitionDesc {
                 colNames.add(((SlotRef) expr).getColumnName());
             } else {
                 throw new AnalysisException(
-                        "auto create partition only support function call expr" +
-                                expr.toSql());
+                        "auto create partition only support function call expr"
+                                + expr.toSql());
             }
         }
         if (colNames.isEmpty()) {
             throw new AnalysisException(
-                    "auto create partition have not find any partition columns" +
-                            exprs.get(0).toSql());
+                    "auto create partition have not find any partition columns"
+                            + exprs.get(0).toSql());
         }
         return colNames;
     }

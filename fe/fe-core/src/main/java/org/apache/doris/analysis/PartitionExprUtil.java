@@ -17,6 +17,15 @@
 
 package org.apache.doris.analysis;
 
+import org.apache.doris.catalog.OlapTable;
+import org.apache.doris.catalog.PartitionType;
+import org.apache.doris.common.AnalysisException;
+import org.apache.doris.thrift.TPartitionByRange;
+
+import com.google.common.collect.Maps;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -27,34 +36,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-
-import org.apache.doris.catalog.OlapTable;
-import org.apache.doris.catalog.PartitionType;
-import org.apache.doris.common.AnalysisException;
-import org.apache.doris.thrift.TPartitionByRange;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Maps;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 public class PartitionExprUtil {
-    private static final Logger LOG = LogManager.getLogger(PartitionExprUtil.class);
-    public static final Set<String> SUPPORTED_PARTITION_FORMAT = ImmutableSet.of("hour", "day", "month", "year");
     public static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     public static final DateTimeFormatter DATETIME_NAME_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final Logger LOG = LogManager.getLogger(PartitionExprUtil.class);
     private static final PartitionExprUtil partitionExprUtil = new PartitionExprUtil();
 
-    public class FunctionIntervalInfo {
-        public String timeUnit;
-        public int interval;
-        public FunctionIntervalInfo(String timeUnit, int interval) {
-            this.timeUnit = timeUnit;
-            this.interval = interval;
-        }
-    }
-
-    public static FunctionIntervalInfo getFunctionIntervalInfo(ArrayList<Expr> partitionExprs, PartitionType partitionType) throws AnalysisException {
+    public static FunctionIntervalInfo getFunctionIntervalInfo(ArrayList<Expr> partitionExprs,
+            PartitionType partitionType) throws AnalysisException {
         if (partitionType != PartitionType.RANGE) {
             return null;
         }
@@ -91,7 +81,7 @@ public class PartitionExprUtil {
         String timeUnit = intervalInfo.timeUnit;
         int interval = intervalInfo.interval;
         switch (timeUnit) {
-            case "year": 
+            case "year":
                 return beginTime.plusYears(interval);
             case "month":
                 return beginTime.plusMonths(interval);
@@ -110,7 +100,8 @@ public class PartitionExprUtil {
     }
 
     public static Map<String, AddPartitionClause> getAddPartitionClauseFromPartitionValues(OlapTable olapTable,
-            List<TPartitionByRange> partitionValues, ArrayList<Expr> partitionExprs, PartitionType partitionType) throws AnalysisException {
+            List<TPartitionByRange> partitionValues, ArrayList<Expr> partitionExprs, PartitionType partitionType)
+            throws AnalysisException {
         Map<String, AddPartitionClause> result = Maps.newHashMap();
         FunctionIntervalInfo intervalInfo = getFunctionIntervalInfo(partitionExprs, partitionType);
 
@@ -127,19 +118,19 @@ public class PartitionExprUtil {
                 String lowerBound = beginDateTime.format(DATETIME_NAME_FORMATTER);
                 partitionName += lowerBound;
 
-             LocalDateTime endDateTime = getRangeEnd(beginDateTime, intervalInfo);
-             String endTime = endDateTime.format(DATETIME_FORMATTER);
+                LocalDateTime endDateTime = getRangeEnd(beginDateTime, intervalInfo);
+                String endTime = endDateTime.format(DATETIME_FORMATTER);
 
-             PartitionValue upperValue = new PartitionValue(endTime);
-             partitionKeyDesc = PartitionKeyDesc.createFixed(
-                    Collections.singletonList(lowerValue),
-                    Collections.singletonList(upperValue));
+                PartitionValue upperValue = new PartitionValue(endTime);
+                partitionKeyDesc = PartitionKeyDesc.createFixed(
+                        Collections.singletonList(lowerValue),
+                        Collections.singletonList(upperValue));
 
             } else if (partitionType == PartitionType.LIST) {
                 List<List<PartitionValue>> listValues = new ArrayList<>();
                 listValues.add(Collections.singletonList(lowerValue));
                 partitionKeyDesc = PartitionKeyDesc.createIn(
-                    listValues);
+                        listValues);
                 partitionName += lowerValue.getStringValue();
             } else {
                 throw new AnalysisException("now only support range and list partition");
@@ -165,12 +156,22 @@ public class PartitionExprUtil {
     public static LocalDateTime parseStringWithDefaultHSM(String datetime,
             DateTimeFormatter formatter) {
         TemporalAccessor temporal = formatter.parse(datetime);
-        if (temporal.isSupported(ChronoField.HOUR_OF_DAY) &&
-                temporal.isSupported(ChronoField.SECOND_OF_MINUTE) &&
-                temporal.isSupported(ChronoField.MINUTE_OF_HOUR)) {
+        if (temporal.isSupported(ChronoField.HOUR_OF_DAY)
+                && temporal.isSupported(ChronoField.SECOND_OF_MINUTE)
+                && temporal.isSupported(ChronoField.MINUTE_OF_HOUR)) {
             return LocalDateTime.from(temporal);
         } else {
             return LocalDateTime.of(LocalDate.from(temporal), LocalTime.of(0, 0, 0));
+        }
+    }
+
+    public class FunctionIntervalInfo {
+        public String timeUnit;
+        public int interval;
+
+        public FunctionIntervalInfo(String timeUnit, int interval) {
+            this.timeUnit = timeUnit;
+            this.interval = interval;
         }
     }
 }

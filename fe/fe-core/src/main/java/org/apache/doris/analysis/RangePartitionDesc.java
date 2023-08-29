@@ -38,7 +38,8 @@ public class RangePartitionDesc extends PartitionDesc {
         type = org.apache.doris.catalog.PartitionType.RANGE;
     }
 
-    public RangePartitionDesc(ArrayList<Expr> exprs, List<String> partitionColNames, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+    public RangePartitionDesc(ArrayList<Expr> exprs, List<String> partitionColNames,
+            List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
         if (exprs != null) {
             this.partitionExprs = exprs;
         }
@@ -47,7 +48,8 @@ public class RangePartitionDesc extends PartitionDesc {
         this.type = org.apache.doris.catalog.PartitionType.RANGE;
     }
 
-    public static RangePartitionDesc createRangePartitionDesc(ArrayList<Expr> exprs, List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
+    public static RangePartitionDesc createRangePartitionDesc(ArrayList<Expr> exprs,
+            List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
         List<String> colNames = getColNamesFromExpr(exprs);
         if (Config.enable_auto_create_partition) {
             return new RangePartitionDesc(exprs, colNames, allPartitionDescs);

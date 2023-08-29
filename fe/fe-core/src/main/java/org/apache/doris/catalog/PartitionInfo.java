@@ -19,7 +19,6 @@ package org.apache.doris.catalog;
 
 import org.apache.doris.analysis.DateLiteral;
 import org.apache.doris.analysis.Expr;
-import org.apache.doris.analysis.FunctionCallExpr;
 import org.apache.doris.analysis.MaxLiteral;
 import org.apache.doris.analysis.PartitionDesc;
 import org.apache.doris.analysis.PartitionValue;
@@ -85,7 +84,7 @@ public class PartitionInfo implements Writable {
     // so we defer adding meta serialization until memory engine feature is more complete.
     protected Map<Long, TTabletType> idToTabletType;
 
-    // the enable automatic partition will hold this, could create partition by expr result 
+    // the enable automatic partition will hold this, could create partition by expr result
     protected ArrayList<Expr> partitionExprs;
 
     public PartitionInfo() {
