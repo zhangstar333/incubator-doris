@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <ostream>
+#include <tuple>
 
 #include "common/exception.h"
 #include "common/status.h"
@@ -58,6 +59,59 @@ void OlapTableIndexSchema::to_protobuf(POlapTableIndexSchema* pindex) const {
     for (auto index : indexes) {
         index->to_schema_pb(pindex->add_indexes_desc());
     }
+}
+
+bool VOlapTablePartKeyComparator::operator()(const BlockRowWithIndicator lhs,
+                                             const BlockRowWithIndicator rhs) const {
+    vectorized::Block* l_block = std::get<0>(lhs);
+    vectorized::Block* r_block = std::get<0>(rhs);
+    int32_t l_row = std::get<1>(lhs);
+    int32_t r_row = std::get<1>(rhs);
+    bool l_use_new = std::get<2>(lhs);
+    bool r_use_new = std::get<2>(rhs);
+
+    if (l_row == -1) {
+        return false;
+    } else if (r_row == -1) {
+        return true;
+    }
+
+    if (_param_locs.empty()) { // no transform, use origin column
+        for (auto slot_loc : _slot_locs) {
+            LOG(WARNING) << "comparing!\n"
+                         << l_block->dump_data() << r_block->dump_data() << slot_loc;
+
+            auto res = l_block->get_by_position(slot_loc).column->compare_at(
+                    l_row, r_row, *r_block->get_by_position(slot_loc).column, -1);
+            if (res != 0) {
+                return res < 0;
+            }
+        }
+    } else { // use transformed column to compare
+        CHECK(_slot_locs.size() == _param_locs.size())
+                << _slot_locs.size() << ' ' << _param_locs.size();
+
+        //TODO: use template to accelerate this for older compiler.
+        const std::vector<uint16_t>* l_index = l_use_new ? &_param_locs : &_slot_locs;
+        const std::vector<uint16_t>* r_index = r_use_new ? &_param_locs : &_slot_locs;
+
+        for (int i = 0; i < _slot_locs.size(); i++) {
+            LOG(WARNING) << "comparing!\n"
+                         << l_block->dump_data() << r_block->dump_data() << (*l_index)[i] << ' '
+                         << (*r_index)[i];
+
+            auto res = l_block->get_by_position((*l_index)[i])
+                               .column->compare_at(l_row, r_row,
+                                                   *r_block->get_by_position((*r_index)[i]).column,
+                                                   -1);
+            if (res != 0) {
+                return res < 0;
+            }
+        }
+    }
+
+    // equal, return false
+    return false;
 }
 
 Status OlapTableSchemaParam::init(const POlapTableSchemaParam& pschema) {
@@ -258,8 +312,8 @@ Status VOlapTablePartitionParam::init() {
     }
 
     _partitions_map.reset(
-            new std::map<BlockRow*, VOlapTablePartition*, VOlapTablePartKeyComparator>(
-                    VOlapTablePartKeyComparator(_partition_slot_locs)));
+            new std::map<BlockRowWithIndicator, VOlapTablePartition*, VOlapTablePartKeyComparator>(
+                    VOlapTablePartKeyComparator(_partition_slot_locs, _transformed_slot_locs)));
     if (_t_param.__isset.distributed_columns) {
         for (auto& col : _t_param.distributed_columns) {
             RETURN_IF_ERROR(find_slot_locs(col, _distributed_slot_locs, "distributed"));
@@ -298,10 +352,11 @@ Status VOlapTablePartitionParam::init() {
         _partitions.emplace_back(part);
         if (_is_in_partition) {
             for (auto& in_key : part->in_keys) {
-                _partitions_map->emplace(&in_key, part);
+                _partitions_map->emplace(std::tuple {in_key.first, in_key.second, false}, part);
             }
         } else {
-            _partitions_map->emplace(&part->end_key, part);
+            _partitions_map->emplace(std::tuple {part->end_key.first, part->end_key.second, false},
+                                     part);
         }
     }
 
@@ -312,17 +367,31 @@ Status VOlapTablePartitionParam::init() {
 
 bool VOlapTablePartitionParam::find_partition(BlockRow* block_row,
                                               const VOlapTablePartition** partition) const {
-    auto it = _is_in_partition ? _partitions_map->find(block_row)
-                               : _partitions_map->upper_bound(block_row);
+    // block_row is gave by inserting process. So try to use transformed index.
+    auto it =
+            _is_in_partition
+                    ? _partitions_map->find(std::tuple {block_row->first, block_row->second, true})
+                    : _partitions_map->upper_bound(
+                              std::tuple {block_row->first, block_row->second, true});
     // for list partition it might result in default partition
     if (_is_in_partition) {
         *partition = (it != _partitions_map->end()) ? it->second : _default_partition;
         it = _partitions_map->end();
     }
-    if (it != _partitions_map->end() && _part_contains(it->second, block_row)) {
+    if (it != _partitions_map->end() &&
+        _part_contains(it->second, std::tuple {block_row->first, block_row->second, true})) {
         *partition = it->second;
     }
     return (*partition != nullptr);
+}
+
+bool VOlapTablePartitionParam::_part_contains(VOlapTablePartition* part,
+                                              BlockRowWithIndicator key) const {
+    // start_key.second == -1 means only single partition
+    VOlapTablePartKeyComparator comparator(_partition_slot_locs, _transformed_slot_locs);
+    return part->start_key.second == -1 ||
+           !comparator(key,
+                       std::tuple {part->start_key.first, part->start_key.second, false});
 }
 
 uint32_t VOlapTablePartitionParam::find_tablet(BlockRow* block_row,
@@ -537,10 +606,11 @@ Status VOlapTablePartitionParam::add_partitions(
         _partitions.emplace_back(part);
         if (_is_in_partition) {
             for (auto& in_key : part->in_keys) {
-                _partitions_map->emplace(&in_key, part);
+                _partitions_map->emplace(std::tuple {in_key.first, in_key.second, false}, part);
             }
         } else {
-            _partitions_map->emplace(&part->end_key, part);
+            _partitions_map->emplace(std::tuple {part->end_key.first, part->end_key.second, false},
+                                     part);
         }
     }
 

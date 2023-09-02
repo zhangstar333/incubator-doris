@@ -90,7 +90,7 @@ public:
     ~TabletsChannel();
 
     Status open(const PTabletWriterOpenRequest& request);
-
+    // open + open writers
     Status incremental_open(const PTabletWriterOpenRequest& params);
 
     // no-op when this channel has been closed or cancelled

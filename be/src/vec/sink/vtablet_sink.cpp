@@ -1189,7 +1189,7 @@ Status VOlapTableSink::prepare(RuntimeState* state) {
     // prepare for auto partition functions
     if (_vpartition->is_auto_partition()) {
         auto [part_ctx, part_func] = _get_partition_function();
-        part_func->prepare(_state, *_output_row_desc, part_ctx.get());
+        RETURN_IF_ERROR(part_func->prepare(_state, *_output_row_desc, part_ctx.get()));
     }
 
     _prepare = true;
@@ -1308,13 +1308,12 @@ Status VOlapTableSink::_automatic_create_partition() {
     Status status(Status::create(result.status));
     VLOG(1) << "automatic partition rpc end response " << result;
     if (result.status.status_code == TStatusCode::OK) {
-        std::stringstream ss;
-        result.printTo(ss);
         // add new created partitions
         RETURN_IF_ERROR(_vpartition->add_partitions(result.partitions));
 
-        // add new tablet locations
-        _location->add_locations(result.tablets);
+        // add new tablet locations. it will use by address. so add to pool
+        auto* new_locations = _pool->add(new std::vector<TTabletLocation>(result.tablets));
+        _location->add_locations(*new_locations);
 
         // update new node info
         _nodes_info->add_nodes(result.nodes);
@@ -1458,10 +1457,15 @@ VOlapTableSink::_get_partition_function() {
 void VOlapTableSink::_save_missing_values(vectorized::ColumnPtr col,
                                           vectorized::DataTypePtr value_type,
                                           std::vector<int64_t> filter) {
+    _partitions_need_create.clear();
+    std::set<std::string> deduper;
+    // de-duplication
     for (auto row : filter) {
-        // TODO: this is a quickfix. refactor this.
+        deduper.emplace(value_type->to_string(*col, row));
+    }
+    for (auto& value : deduper) {
         TStringLiteral node;
-        node.value = value_type->to_string(*col, row);
+        node.value = value;
         _partitions_need_create.emplace_back(std::vector {node}); // only 1 partition column now
     }
 }
@@ -1503,6 +1507,17 @@ Status VOlapTableSink::send(RuntimeState* state, vectorized::Block* input_block,
         RETURN_IF_ERROR(_single_partition_generate(state, block.get(), channel_to_payload, num_rows,
                                                    has_filtered_rows));
     } else {
+        //if there's projection of partition calc, we need to calc it first.
+        auto [part_ctx, part_func] = _get_partition_function();
+        int result_idx;
+        if (_vpartition->is_projection_partition()) {
+            // calc the start value of missing partition ranges.
+            part_func->execute(part_ctx.get(), block.get(), &result_idx);
+            VLOG_DEBUG << "Partition-calculated block:" << block->dump_data();
+            // change the column to compare to transformed.
+            _vpartition->set_transformed_slots({(uint16_t)result_idx});
+        }
+
         if (_vpartition->is_auto_partition()) {
             std::vector<uint16_t> partition_keys = _vpartition->get_partition_keys();
             //TODO: use loop to create missing_vals for multi column.
@@ -1537,12 +1552,6 @@ Status VOlapTableSink::send(RuntimeState* state, vectorized::Block* input_block,
             // for missing partition keys, calc the missing partition and save in _partitions_need_create
             auto type = partition_col.type;
             if (missing_map.size() > 0) {
-                auto [part_ctx, part_func] = _get_partition_function();
-                int result_idx;
-                // calc the start value of missing partition ranges.
-                part_func->execute(part_ctx.get(), input_block, &result_idx);
-                VLOG_DEBUG << "Partition-calculated block:" << input_block->dump_data();
-
                 auto return_type = part_func->data_type();
 
                 // expose the data column

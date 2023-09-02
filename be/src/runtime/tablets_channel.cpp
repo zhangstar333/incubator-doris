@@ -120,8 +120,8 @@ Status TabletsChannel::open(const PTabletWriterOpenRequest& request) {
 }
 
 Status TabletsChannel::incremental_open(const PTabletWriterOpenRequest& params) {
-    if (_state != kOpened) {
-        RETURN_IF_ERROR(open(params));
+    if (_state == kInitialized) { // haven't opened
+        return open(params);
     }
     std::lock_guard<std::mutex> l(_lock);
     std::vector<SlotDescriptor*>* index_slots = nullptr;
@@ -181,6 +181,8 @@ Status TabletsChannel::incremental_open(const PTabletWriterOpenRequest& params) 
 
     _s_tablet_writer_count += incremental_tablet_num;
     LOG(INFO) << ss.str();
+
+    _state = kOpened;
     return Status::OK();
 }
 
@@ -413,6 +415,9 @@ Status TabletsChannel::_open_all_writers(const PTabletWriterOpenRequest& request
 #endif
 
     for (auto& tablet : request.tablets()) {
+        if (_tablet_writers.find(tablet.tablet_id()) != _tablet_writers.end()) {
+            continue;
+        }
         WriteRequest wrequest;
         wrequest.index_id = request.index_id();
         wrequest.tablet_id = tablet.tablet_id();
@@ -519,7 +524,7 @@ Status TabletsChannel::add_batch(const PTabletWriterAddBlockRequest& request,
                 response->mutable_tablet_errors();
         auto tablet_writer_it = _tablet_writers.find(tablet_id);
         if (tablet_writer_it == _tablet_writers.end()) {
-            return Status::InternalError("unknown tablet to append data, tablet={}");
+            return Status::InternalError("unknown tablet to append data, tablet={}", tablet_id);
         }
         Status st = write_func(tablet_writer_it->second);
         if (!st.ok()) {

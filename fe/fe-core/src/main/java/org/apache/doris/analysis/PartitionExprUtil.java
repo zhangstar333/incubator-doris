@@ -31,8 +31,10 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class PartitionExprUtil {
     public static final String DATETIME_FORMATTER = "%04d-%02d-%02d %02d:%02d:%02d";
@@ -107,13 +109,18 @@ public class PartitionExprUtil {
         List<Column> partiitonColumn = partitionInfo.getPartitionColumns();
         Type partitionColumnType = partiitonColumn.get(0).getType();
         FunctionIntervalInfo intervalInfo = getFunctionIntervalInfo(partitionExprs, partitionType);
+        Set<String> filterPartitionValues = new HashSet<String>();
 
         for (TStringLiteral partitionValue : partitionValues) {
             PartitionKeyDesc partitionKeyDesc = null;
             String partitionName = "p";
-
+            String value = partitionValue.value;
+            if (filterPartitionValues.contains(value)) {
+                continue;
+            }
+            filterPartitionValues.add(value);
             if (partitionType == PartitionType.RANGE) {
-                String beginTime = partitionValue.value;
+                String beginTime = value;
                 DateLiteral beginDateTime = new DateLiteral(beginTime, Type.DATETIMEV2);
                 partitionName += String.format(DATETIME_NAME_FORMATTER,
                         beginDateTime.getYear(), beginDateTime.getMonth(), beginDateTime.getDay(),
@@ -123,7 +130,7 @@ public class PartitionExprUtil {
             } else if (partitionType == PartitionType.LIST) {
                 List<List<PartitionValue>> listValues = new ArrayList<>();
                 // TODO: need to support any type
-                String pointValue = partitionValue.value;
+                String pointValue = value;
                 PartitionValue lowerValue = new PartitionValue(pointValue);
                 listValues.add(Collections.singletonList(lowerValue));
                 partitionKeyDesc = PartitionKeyDesc.createIn(
@@ -134,10 +141,6 @@ public class PartitionExprUtil {
             }
 
             Map<String, String> partitionProperties = Maps.newHashMap();
-            // here need check
-            Short replicationNum = olapTable.getTableProperty().getReplicaAllocation()
-                    .getTotalReplicaNum();
-            partitionProperties.put("replication_num", String.valueOf(replicationNum));
             DistributionDesc distributionDesc = olapTable.getDefaultDistributionInfo().toDistributionDesc();
 
             SinglePartitionDesc singleRangePartitionDesc = new SinglePartitionDesc(true, partitionName,
