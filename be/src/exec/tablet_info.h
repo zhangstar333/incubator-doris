@@ -203,6 +203,7 @@ private:
     const std::vector<SlotDescriptor*>& _slots;
     std::vector<uint16_t> _partition_slot_locs;
     std::vector<uint16_t> _transformed_slot_locs;
+    std::vector<uint16_t> _distributed_slot_locs;
 
     ObjectPool _obj_pool;
     vectorized::Block _partition_block;

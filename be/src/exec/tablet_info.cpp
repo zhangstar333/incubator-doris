@@ -40,6 +40,8 @@
 #include "util/hash_util.hpp"
 #include "util/string_parser.hpp"
 #include "util/string_util.h"
+#include "vec/columns/column.h"
+#include "vec/columns/column_nullable.h"
 #include "vec/common/assert_cast.h"
 #include "vec/common/string_ref.h"
 #include "vec/exprs/vliteral.h"
@@ -100,10 +102,19 @@ bool VOlapTablePartKeyComparator::operator()(const BlockRowWithIndicator lhs,
                          << l_block->dump_data() << r_block->dump_data() << (*l_index)[i] << ' '
                          << (*r_index)[i];
 
-            auto res = l_block->get_by_position((*l_index)[i])
-                               .column->compare_at(l_row, r_row,
-                                                   *r_block->get_by_position((*r_index)[i]).column,
-                                                   -1);
+            vectorized::ColumnPtr l_col = l_block->get_by_position((*l_index)[i]).column;
+            vectorized::ColumnPtr r_col = r_block->get_by_position((*r_index)[i]).column;
+            //TODO: when we support any function for transform, maybe the best way is refactor all doris' functions to its essential nullable mode.
+            if (auto* nullable =
+                        vectorized::check_and_get_column<vectorized::ColumnNullable>(l_col)) {
+                l_col = nullable->get_nested_column_ptr();
+            }
+            if (auto* nullable =
+                        vectorized::check_and_get_column<vectorized::ColumnNullable>(r_col)) {
+                r_col = nullable->get_nested_column_ptr();
+            }
+
+            auto res = l_col->compare_at(l_row, r_row, *r_col, -1);
             if (res != 0) {
                 return res < 0;
             }
