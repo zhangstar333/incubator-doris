@@ -18,9 +18,10 @@
 suite("test_auto_range_partition") {
     def tblName1 = "range_table1"
     sql "drop table if exists ${tblName1}"
+    // not support datev2 now. need impl date_trunc(datev2)
     sql """
         CREATE TABLE `${tblName1}` (
-        `TIME_STAMP` datev2 NOT NULL COMMENT '采集日期'
+        `TIME_STAMP` datetimev2 NOT NULL COMMENT '采集日期'
         ) ENGINE=OLAP
         DUPLICATE KEY(`TIME_STAMP`)
         COMMENT 'OLAP'

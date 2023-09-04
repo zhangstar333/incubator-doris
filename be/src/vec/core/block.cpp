@@ -761,7 +761,10 @@ void Block::append_to_block_by_selector(MutableBlock* dst,
                                         const IColumn::Selector& selector) const {
     DCHECK_EQ(data.size(), dst->mutable_columns().size());
     for (size_t i = 0; i < data.size(); i++) {
-        data[i].column->append_data_by_selector(dst->mutable_columns()[i], selector);
+        // FIXME: this is a quickfix. we assume that only partition functions make there some
+        if (!is_column_const(*data[i].column)) {
+            data[i].column->append_data_by_selector(dst->mutable_columns()[i], selector);
+        }
     }
 }
 

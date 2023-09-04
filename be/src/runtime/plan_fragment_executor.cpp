@@ -333,6 +333,9 @@ Status PlanFragmentExecutor::open_vectorized_internal() {
                 //TODO: Asynchronisation need refactor this
                 if (st.is<NEED_SEND_AGAIN>()) { // created partition, do it again.
                     st = _sink->send(runtime_state(), &block);
+                    if (st.is<NEED_SEND_AGAIN>()) {
+                        LOG(WARNING) << "have to create partition again...";
+                    }
                 }
                 if (st.is<END_OF_FILE>()) {
                     break;
