@@ -341,6 +341,9 @@ public class OlapTableSink extends DataSink {
                 // for auto create partition by function expr, there is no any partition firstly,
                 // But this is required in thrift struct.
                 if (partitionIds.isEmpty()) {
+                    List<String> distColumns = new ArrayList<>();
+                    distColumns.addAll(table.getDistributionColumnNames());
+                    partitionParam.setDistributedColumns(distColumns);
                     partitionParam.setPartitions(new ArrayList<TOlapTablePartition>());
                 }
                 ArrayList<Expr> exprs = partitionInfo.getPartitionExprs();

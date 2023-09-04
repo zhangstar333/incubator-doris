@@ -3143,9 +3143,6 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                     if (bePathsMap.keySet().size() < quorum) {
                         LOG.warn("auto go quorum exception");
                     }
-                    // replicas[0] will be the primary replica
-                    List<Long> replicas = Lists.newArrayList(bePathsMap.keySet());
-                    Collections.shuffle(replicas);
                     tablets.add(new TTabletLocation(tablet.getId(), Lists.newArrayList(bePathsMap.keySet())));
                 }
             }
@@ -3162,6 +3159,7 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         }
         result.setNodes(nodeInfos);
         result.setStatus(new TStatus(TStatusCode.OK));
+        LOG.debug("send create partition result: {}", result);
         return result;
     }
 }
