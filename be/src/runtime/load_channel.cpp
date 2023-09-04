@@ -73,7 +73,6 @@ Status LoadChannel::open(const PTabletWriterOpenRequest& params) {
         std::lock_guard<std::mutex> l(_lock);
         auto it = _tablets_channels.find(index_id);
         if (it != _tablets_channels.end()) {
-            DCHECK(params.is_incremental());
             channel = it->second;
         } else {
             // create a new tablets channel

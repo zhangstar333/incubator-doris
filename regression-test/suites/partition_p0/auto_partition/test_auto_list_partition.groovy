@@ -49,7 +49,7 @@ suite("test_auto_list_partition") {
         ) ENGINE=OLAP
         DUPLICATE KEY(`str`)
         COMMENT 'OLAP'
-        AUTO PARTITION BY LIST upper(`str`)
+        AUTO PARTITION BY LIST (`str`)
         (
         )
         DISTRIBUTED BY HASH(`str`) BUCKETS 10
@@ -60,11 +60,11 @@ suite("test_auto_list_partition") {
     sql """ insert into ${tblName2} values ("Beijing"), ("XXX"), ("xxx"), ("Beijing"), ("Abc") """
     qt_sql3 """ select * from ${tblName2} order by `str` """
     result21 = sql "show partitions from ${tblName2}"
-    assertEquals(result21.size(), 3)
+    assertEquals(result21.size(), 4)
     sql """ insert into ${tblName2} values ("Beijing"), ("XXX"), ("xxx"), ("Beijing"), ("Abc"), ("new") """
     qt_sql4 """ select * from ${tblName2} order by `str` """
     result22 = sql "show partitions from ${tblName2}"
-    assertEquals(result22.size(), 4)
+    assertEquals(result22.size(), 5)
 
     def tblName3 = "list_table3"
     sql "drop table if exists ${tblName3}"
@@ -76,7 +76,7 @@ suite("test_auto_list_partition") {
         ) ENGINE=OLAP
         DUPLICATE KEY(`k1`)
         COMMENT 'OLAP'
-        AUTO PARTITION BY LIST lower(`k2`)
+        AUTO PARTITION BY LIST (`k2`)
         (
         )
         DISTRIBUTED BY HASH(`k1`) BUCKETS 16
@@ -87,5 +87,5 @@ suite("test_auto_list_partition") {
     sql """ insert into ${tblName3} values (1, 'ABC', '2000-01-01 12:12:12.123456'), (2, 'AAA', '2000-01-01'), (3, 'aaa', '2000-01-01'), (3, 'AaA', '2000-01-01') """
     result3 = sql "show partitions from ${tblName3}"
     logger.info("${result3}")
-    assertEquals(result3.size(), 2)
+    assertEquals(result3.size(), 4)
 }

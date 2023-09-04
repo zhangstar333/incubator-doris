@@ -1507,7 +1507,7 @@ Status VOlapTableSink::send(RuntimeState* state, vectorized::Block* input_block,
         RETURN_IF_ERROR(_single_partition_generate(state, block.get(), channel_to_payload, num_rows,
                                                    has_filtered_rows));
     } else {
-        //if there's projection of partition calc, we need to calc it first.
+        // if there's projection of partition calc, we need to calc it first.
         auto [part_ctx, part_func] = _get_partition_function();
         int result_idx;
         if (_vpartition->is_projection_partition()) {
