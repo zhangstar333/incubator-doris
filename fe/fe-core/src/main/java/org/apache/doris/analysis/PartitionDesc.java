@@ -196,6 +196,15 @@ public class PartitionDesc {
                     if (this instanceof ListPartitionDesc && columnDef.isAllowNull()) {
                         throw new AnalysisException("The list partition column must be NOT NULL");
                     }
+                    if (this instanceof RangePartitionDesc && partitionExprs != null) {
+                        if (partitionExprs.get(0) instanceof FunctionCallExpr) {
+                            if (!columnDef.getType().isDatetime() && !columnDef.getType().isDatetimeV2()) {
+                                throw new AnalysisException(
+                                        "auto create partition function expr need datetime/datetimev2 type. "
+                                                + partitionExprs.get(0).toSql());
+                            }
+                        }
+                    }
                     found = true;
                     break;
                 }
