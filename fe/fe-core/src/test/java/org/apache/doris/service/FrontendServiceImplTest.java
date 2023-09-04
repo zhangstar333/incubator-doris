@@ -126,7 +126,7 @@ public class FrontendServiceImplTest {
                 + "    city_code VARCHAR(100) not null\n"
                 + ")\n"
                 + "DUPLICATE KEY(event_day, site_id, city_code)\n"
-                + "AUTO PARTITION BY list upper(city_code) (\n"
+                + "AUTO PARTITION BY list (city_code) (\n"
                 + "\n"
                 + ")\n"
                 + "DISTRIBUTED BY HASH(event_day, site_id) BUCKETS 2\n"

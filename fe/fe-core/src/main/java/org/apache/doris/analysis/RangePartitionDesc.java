@@ -49,7 +49,7 @@ public class RangePartitionDesc extends PartitionDesc {
 
     public static RangePartitionDesc createRangePartitionDesc(ArrayList<Expr> exprs,
             List<AllPartitionDesc> allPartitionDescs) throws AnalysisException {
-        List<String> colNames = getColNamesFromExpr(exprs);
+        List<String> colNames = getColNamesFromExpr(exprs, false);
         return new RangePartitionDesc(exprs, colNames, allPartitionDescs);
     }
 
