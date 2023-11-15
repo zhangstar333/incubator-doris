@@ -339,9 +339,9 @@ Status NewOlapScanNode::_build_key_ranges_and_filters() {
         _runtime_profile->add_info_string("PushDownPredicates",
                                           olap_filters_to_string(_olap_filters));
         _runtime_profile->add_info_string("KeyRanges", _scan_keys.debug_string());
-        _runtime_profile->add_info_string("TabletIds", tablets_id_to_string(_scan_ranges));
+        _runtime_profile->add_info_string("TabletIds", std::to_string(_scan_ranges.size()));
     }
-    VLOG_CRITICAL << _scan_keys.debug_string();
+    VLOG_CRITICAL << _scan_keys.debug_string() << tablets_id_to_string(_scan_ranges);
 
     return Status::OK();
 }

@@ -341,6 +341,10 @@ protected:
     RuntimeProfile::Counter* _scanner_ctx_sched_counter = nullptr;
     RuntimeProfile::Counter* _scanner_ctx_sched_time = nullptr;
     RuntimeProfile::Counter* _scanner_wait_batch_timer = nullptr;
+    RuntimeProfile::Counter* _trigger_new_scheduling_timer = nullptr;
+    RuntimeProfile::Counter* _wait_by_empty_queue_counter = nullptr;
+    RuntimeProfile::Counter* _put_and_rescheduler_count = nullptr;
+    RuntimeProfile::Counter* _have_get_block_from_queue = nullptr;
     RuntimeProfile::Counter* _scanner_wait_worker_timer = nullptr;
     // Num of newly created free blocks when running query
     RuntimeProfile::Counter* _newly_create_free_blocks_num = nullptr;

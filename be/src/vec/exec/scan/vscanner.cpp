@@ -37,6 +37,10 @@ VScanner::VScanner(RuntimeState* state, VScanNode* parent, int64_t limit, Runtim
           _profile(profile),
           _output_tuple_desc(parent->output_tuple_desc()) {
     _total_rf_num = _parent->runtime_filter_num();
+    _scanner_new_open_watch.reset();
+    _scanner_new_open_watch.start();
+    _scanner_first_get_this_run_watch.reset();
+    _scanner_first_get_this_run_watch.start();
 }
 
 VScanner::VScanner(RuntimeState* state, pipeline::ScanLocalStateBase* local_state, int64_t limit,
@@ -178,7 +182,7 @@ Status VScanner::close(RuntimeState* state) {
     if (_is_closed) {
         return Status::OK();
     }
-
+    update_open_close_worker_timer();
     if (_parent) {
         COUNTER_UPDATE(_parent->_scanner_wait_worker_timer, _scanner_wait_worker_timer);
     } else {

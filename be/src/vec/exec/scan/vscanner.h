@@ -64,7 +64,14 @@ public:
 
     virtual Status init() { return Status::OK(); }
 
-    virtual Status open(RuntimeState* state) { return Status::OK(); }
+    virtual Status open(RuntimeState* state) {
+        if (!_is_open) {
+            update_new_open_timer();
+            _scanner_open_close_watch.reset();
+            _scanner_open_close_watch.start();
+        }
+        return Status::OK();
+    }
 
     Status get_block(RuntimeState* state, Block* block, bool* eos);
 
@@ -112,6 +119,29 @@ public:
         _cpu_watch.start();
     }
 
+    void update_new_open_timer() {
+        _per_scanner_new_open_timer += _scanner_new_open_watch.elapsed_time();
+    }
+    auto return_new_open_timer() const { return _per_scanner_new_open_timer; }
+
+    void update_first_get_run_timer() {
+        _per_scanner_get_first_run_timer += _scanner_first_get_this_run_watch.elapsed_time();
+    }
+    auto return_first_get_run_timer() const { return _per_scanner_get_first_run_timer; }
+
+    void update_open_close_worker_timer() {
+        _per_scanner_open_close_timer += _scanner_open_close_watch.elapsed_time();
+    }
+
+    auto return_open_close_worker_timer() {
+        if (_is_closed || _need_to_close) {
+            return _per_scanner_open_close_timer;
+        } else {
+            _per_scanner_open_close_timer += _scanner_open_close_watch.elapsed_time();
+            return _per_scanner_open_close_timer;
+        }
+    }
+
     void update_wait_worker_timer() { _scanner_wait_worker_timer += _watch.elapsed_time(); }
 
     int64_t get_scanner_wait_worker_timer() const { return _scanner_wait_worker_timer; }
@@ -136,6 +166,7 @@ public:
         // the tablet == null when init failed.
         if (_is_open) {
             _update_counters_before_close();
+            update_open_close_worker_timer();
         }
         _need_to_close = true;
     }
@@ -206,6 +237,9 @@ protected:
 
     // watch to count the time wait for scanner thread
     MonotonicStopWatch _watch;
+    MonotonicStopWatch _scanner_open_close_watch;         // open to close timer
+    MonotonicStopWatch _scanner_new_open_watch;           // new object to open timer
+    MonotonicStopWatch _scanner_first_get_this_run_watch; //
     // Do not use ScopedTimer. There is no guarantee that, the counter
     ThreadCpuStopWatch _cpu_watch;
     int64_t _scanner_wait_worker_timer = 0;
@@ -219,6 +253,9 @@ protected:
 
     ScannerCounter _counter;
     int64_t _per_scanner_timer = 0;
+    uint64_t _per_scanner_open_close_timer = 0;
+    uint64_t _per_scanner_new_open_timer = 0;
+    uint64_t _per_scanner_get_first_run_timer = 0;
 };
 
 using VScannerSPtr = std::shared_ptr<VScanner>;

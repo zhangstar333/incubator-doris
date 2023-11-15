@@ -294,6 +294,10 @@ Status VScanNode::_init_profile() {
             ADD_COUNTER(_scanner_profile, "NewlyCreateFreeBlocksNum", TUnit::UNIT);
     // time of transfer thread to wait for block from scan thread
     _scanner_wait_batch_timer = ADD_TIMER(_scanner_profile, "ScannerBatchWaitTime");
+    _trigger_new_scheduling_timer = ADD_COUNTER(_scanner_profile, "1ScannerTriggerNewCount",TUnit::UNIT);
+    _put_and_rescheduler_count = ADD_COUNTER(_scanner_profile, "1ScannerPutBackReScheduler",TUnit::UNIT);
+    _have_get_block_from_queue = ADD_TIMER(_scanner_profile, "1ScannerGetBlockFromQueueTime");
+    _wait_by_empty_queue_counter = ADD_COUNTER(_scanner_profile, "1ScannerWaitEmptyQueueCount", TUnit::UNIT);
     _scanner_sched_counter = ADD_COUNTER(_scanner_profile, "ScannerSchedCount", TUnit::UNIT);
     _scanner_ctx_sched_counter = ADD_COUNTER(_scanner_profile, "ScannerCtxSchedCount", TUnit::UNIT);
     _scanner_ctx_sched_time = ADD_TIMER(_scanner_profile, "ScannerCtxSchedTime");

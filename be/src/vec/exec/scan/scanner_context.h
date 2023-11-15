@@ -155,6 +155,7 @@ public:
         int thread_slot_num = 0;
         thread_slot_num = (allowed_blocks_num() + _block_per_scanner - 1) / _block_per_scanner;
         thread_slot_num = std::min(thread_slot_num, _max_thread_num - _num_running_scanners);
+        thread_slot_num = std::max(2,thread_slot_num );
         return thread_slot_num;
     }
 
@@ -264,9 +265,7 @@ protected:
     // Not need to protect by lock, because only one scheduler thread will access to it.
     doris::Mutex _scanners_lock;
     std::list<VScannerSPtr> _scanners;
-    std::vector<int64_t> _finished_scanner_runtime;
-    std::vector<int64_t> _finished_scanner_rows_read;
-    std::vector<int64_t> _finished_scanner_wait_worker_time;
+    std::list<VScannerSPtr> _mark_closed_scanners;
 
     const int _num_parallel_instances;
 
@@ -278,7 +277,12 @@ protected:
     RuntimeProfile::HighWaterMarkCounter* _queued_blocks_memory_usage = nullptr;
     RuntimeProfile::Counter* _newly_create_free_blocks_num = nullptr;
     RuntimeProfile::Counter* _scanner_wait_batch_timer = nullptr;
-
+    RuntimeProfile::Counter* _trigger_new_scheduling_timer = nullptr;
+    RuntimeProfile::Counter* _wait_by_empty_queue_counter = nullptr;
+    RuntimeProfile::Counter* _have_get_block_from_queue = nullptr;
+    RuntimeProfile::Counter* _put_and_rescheduler_count = nullptr;
+    std::set<int> this_run_size;
+    std::set<int> this_run_running_num;
     std::shared_ptr<pipeline::ScannerDoneDependency> _scanner_done_dependency = nullptr;
     std::shared_ptr<pipeline::FinishDependency> _finish_dependency = nullptr;
 };
