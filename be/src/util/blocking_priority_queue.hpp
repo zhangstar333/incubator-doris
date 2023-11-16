@@ -51,8 +51,8 @@ public:
     // are no more elements available.
     // -- timeout_ms: 0 means wait indefinitely
     bool blocking_get(T* out, uint32_t timeout_ms = 0) {
-        MonotonicStopWatch timer;
-        timer.start();
+        // MonotonicStopWatch timer;
+        // timer.start();
         std::unique_lock unique_lock(_lock);
         bool wait_successful = false;
 #if !defined(USE_BTHREAD_SCANNER)
@@ -92,7 +92,7 @@ public:
             wait_successful = true;
         }
 #endif
-        _total_get_wait_time += timer.elapsed_time();
+        // _total_get_wait_time += timer.elapsed_time();
         if (wait_successful) {
             if (_upgrade_counter > config::priority_queue_remaining_tasks_increased_frequency) {
                 std::priority_queue<T> tmp_queue;
@@ -163,14 +163,14 @@ public:
     // Puts an element into the queue, waiting indefinitely until there is space.
     // If the queue is shut down, returns false.
     bool blocking_put(const T& val) {
-        MonotonicStopWatch timer;
-        timer.start();
+        // MonotonicStopWatch timer;
+        // timer.start();
         std::unique_lock unique_lock(_lock);
         while (!(_shutdown || _queue.size() < _max_element)) {
             ++_put_waiting;
             _put_cv.wait(unique_lock);
         }
-        _total_put_wait_time += timer.elapsed_time();
+        // _total_put_wait_time += timer.elapsed_time();
 
         if (_shutdown) {
             return false;
