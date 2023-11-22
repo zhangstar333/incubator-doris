@@ -368,62 +368,85 @@ Status ScannerContext::_close_and_clear_scanners(Parent* parent, RuntimeState* s
         std::stringstream scanner_statistics;
         std::stringstream scanner_rows_read;
         std::stringstream scanner_wait_worker_time;
+        std::stringstream scanner_wait_worker_queue_time;
+        std::stringstream scanner_wait_offer_time;
         std::stringstream scanner_open_close_worker_time;
         std::stringstream scanner_new_open_worker_time;
         std::stringstream scanner_get_first_run_time;
         scanner_statistics << "[";
         scanner_rows_read << "[";
         scanner_wait_worker_time << "[";
+        scanner_wait_worker_queue_time<< "[";
+        scanner_wait_offer_time << "[";
         scanner_open_close_worker_time << "[";
         scanner_new_open_worker_time << "[";
         scanner_get_first_run_time << "[";
-        // std::vector<long> v1;
-        // std::vector<long> v2;
+        std::vector<long> v1;
+        std::vector<long> v2;
         std::vector<long> v3;
-        // std::vector<long> v4;
-        // std::vector<long> v5;
+        std::vector<long> v4;
+        std::vector<long> v5;
         std::vector<long> v6;
+        std::vector<long> v7;
+        std::vector<std::pair<long,long>> v8;
 
         for (auto& scanner : _mark_closed_scanners) {
-            // v1.push_back(scanner->get_time_cost_ns());
-            // v2.push_back(scanner->get_rows_read());
+            v1.push_back(scanner->get_time_cost_ns());
+            v2.push_back(scanner->get_rows_read());
             v3.push_back(scanner->get_scanner_wait_worker_timer());
-            // v4.push_back(scanner->return_open_close_worker_timer());
-            // v5.push_back(scanner->return_new_open_timer());
+            v4.push_back(scanner->return_open_close_worker_timer());
+            v5.push_back(scanner->return_new_open_timer());
             v6.push_back(scanner->return_first_get_run_timer());
+            v7.push_back(scanner->get_scanner_wait_offer_timer());
+            v8.push_back({scanner->get_scanner_wait_worker_timer(), scanner->get_queue_pool_size()});
         }
         for (auto& scanner : _scanners) {
             // Scanners are in ObjPool in ScanNode,
             // so no need to delete them here.
             // Add per scanner running time before close them
-            // v1.push_back(scanner->get_time_cost_ns());
-            // v2.push_back(scanner->get_rows_read());
+            v1.push_back(scanner->get_time_cost_ns());
+            v2.push_back(scanner->get_rows_read());
             v3.push_back(scanner->get_scanner_wait_worker_timer());
-            // v4.push_back(scanner->return_open_close_worker_timer());
-            // v5.push_back(scanner->return_new_open_timer());
+            v4.push_back(scanner->return_open_close_worker_timer());
+            v5.push_back(scanner->return_new_open_timer());
             v6.push_back(scanner->return_first_get_run_timer());
+            v7.push_back(scanner->get_scanner_wait_offer_timer());
+            v8.push_back({scanner->get_scanner_wait_worker_timer(), scanner->get_queue_pool_size()});
         }
-        // std::sort(v1.begin(), v1.end());
-        // std::sort(v2.begin(), v2.end());
+        std::sort(v1.begin(), v1.end());
+        std::sort(v2.begin(), v2.end());
         std::sort(v3.begin(), v3.end());
-        // std::sort(v4.begin(), v4.end());
-        // std::sort(v5.begin(), v5.end());
+        std::sort(v4.begin(), v4.end());
+        std::sort(v5.begin(), v5.end());
         std::sort(v6.begin(), v6.end());
+        std::sort(v7.begin(), v7.end());
+        std::sort(v8.begin(), v8.end());
         for (int i = 0; i < 10; ++i) {
-            // scanner_statistics << PrettyPrinter::print(v1[i], TUnit::TIME_NS) << ", ";
-            // scanner_rows_read << PrettyPrinter::print(v2[i], TUnit::UNIT) << ", ";
+            scanner_statistics << PrettyPrinter::print(v1[i], TUnit::TIME_NS) << ", ";
+            scanner_rows_read << PrettyPrinter::print(v2[i], TUnit::UNIT) << ", ";
             scanner_wait_worker_time << PrettyPrinter::print(v3[i], TUnit::TIME_NS) << ", ";
-            // scanner_open_close_worker_time << PrettyPrinter::print(v4[i], TUnit::TIME_NS) << ", ";
-            // scanner_new_open_worker_time << PrettyPrinter::print(v5[i], TUnit::TIME_NS) << ", ";
+            scanner_open_close_worker_time << PrettyPrinter::print(v4[i], TUnit::TIME_NS) << ", ";
+            scanner_new_open_worker_time << PrettyPrinter::print(v5[i], TUnit::TIME_NS) << ", ";
             scanner_get_first_run_time << PrettyPrinter::print(v6[i], TUnit::TIME_NS) << ", ";
+            scanner_wait_offer_time << PrettyPrinter::print(v7[i], TUnit::TIME_NS) << ", ";
+            // scanner_wait_worker_queue_time <<"{"<< PrettyPrinter::print(v8[i].first, TUnit::TIME_NS) <<","<<v8[i].second<< "}, ";
+            scanner_wait_worker_queue_time <<"{";
+            auto x =  v8[i];
+            scanner_wait_worker_queue_time<<PrettyPrinter::print((long) x.first, TUnit::TIME_NS);
+            scanner_wait_worker_queue_time<<","<<x.second<< "}, ";
         }
         for (int i = v3.size() - 10; i < v3.size(); ++i) {
-            // scanner_statistics << PrettyPrinter::print(v1[i], TUnit::TIME_NS) << ", ";
-            // scanner_rows_read << PrettyPrinter::print(v2[i], TUnit::UNIT) << ", ";
+            scanner_statistics << PrettyPrinter::print(v1[i], TUnit::TIME_NS) << ", ";
+            scanner_rows_read << PrettyPrinter::print(v2[i], TUnit::UNIT) << ", ";
             scanner_wait_worker_time << PrettyPrinter::print(v3[i], TUnit::TIME_NS) << ", ";
-            // scanner_open_close_worker_time << PrettyPrinter::print(v4[i], TUnit::TIME_NS) << ", ";
-            // scanner_new_open_worker_time << PrettyPrinter::print(v5[i], TUnit::TIME_NS) << ", ";
+            scanner_open_close_worker_time << PrettyPrinter::print(v4[i], TUnit::TIME_NS) << ", ";
+            scanner_new_open_worker_time << PrettyPrinter::print(v5[i], TUnit::TIME_NS) << ", ";
             scanner_get_first_run_time << PrettyPrinter::print(v6[i], TUnit::TIME_NS) << ", ";
+            scanner_wait_offer_time << PrettyPrinter::print(v7[i], TUnit::TIME_NS) << ", ";
+            // scanner_wait_worker_queue_time <<"{"<< PrettyPrinter::print(v8[i].first, TUnit::TIME_NS) <<","<<v8[i].second<< "}, ";
+            scanner_wait_worker_queue_time <<"{";
+            scanner_wait_worker_queue_time<<PrettyPrinter::print((long)v8[i].first, TUnit::TIME_NS);
+            scanner_wait_worker_queue_time<<","<<v8[i].second<< "}, ";
         }
         scanner_statistics << "]";
         scanner_rows_read << "]";
@@ -431,17 +454,36 @@ Status ScannerContext::_close_and_clear_scanners(Parent* parent, RuntimeState* s
         scanner_open_close_worker_time << "]";
         scanner_new_open_worker_time << "]";
         scanner_get_first_run_time << "]";
+        scanner_wait_offer_time << "]";
+        scanner_wait_worker_queue_time<< "]";
+
+        long all_scan_running_avg = (std::accumulate(v1.begin(), v1.end(), 0)) / v1.size();
+        long all_scan_rows_avg = (std::accumulate(v2.begin(), v2.end(), 0)) / v2.size();
+        long long all_scan_wait_sum = 0;
+        for(auto val : v3) {
+            all_scan_wait_sum +=val;
+        }
+        long all_scan_wait_avg = all_scan_wait_sum/v3.size();
+        scanner_statistics <<" all_scan_running_avg: "<<PrettyPrinter::print(all_scan_running_avg, TUnit::TIME_NS);
+        scanner_rows_read <<" all_scan_rows_avg: "<<PrettyPrinter::print(all_scan_rows_avg, TUnit::UNIT);
+        scanner_wait_worker_time <<" all_scan_wait_avg: "<<PrettyPrinter::print(all_scan_wait_avg, TUnit::TIME_NS);
+
         parent->scanner_profile()->add_info_string("PerScannerRunningTime",
                                                    scanner_statistics.str());
         parent->scanner_profile()->add_info_string("PerScannerRowsRead", scanner_rows_read.str());
         parent->scanner_profile()->add_info_string("PerScannerWaitTime",
                                                    scanner_wait_worker_time.str());
+        parent->scanner_profile()->add_info_string("PerScannerWaitOfferTime",
+                                                   scanner_wait_offer_time.str());
         parent->scanner_profile()->add_info_string("PerScannerOpenToCloseTime",
                                                    scanner_open_close_worker_time.str());
         parent->scanner_profile()->add_info_string("PerScannerNewToOpenTime",
                                                    scanner_new_open_worker_time.str());
         parent->scanner_profile()->add_info_string("PerScannerFirstGetRunTime",
                                                    scanner_get_first_run_time.str());
+        parent->scanner_profile()->add_info_string("scanner_wait_worker_queue_time",
+                                                   scanner_wait_worker_queue_time.str());
+        
         // std::string str;
         // for (auto val : this_run_size) {
         //     str = str + std::to_string(val) + ", ";
@@ -523,6 +565,7 @@ std::string ScannerContext::debug_string() {
 
 void ScannerContext::reschedule_scanner_ctx() {
     std::lock_guard l(_transfer_lock);
+    _trigger_new_scheduling_timer->update(1);
     auto state = _scanner_scheduler->submit(this);
     //todo(wb) rethinking is it better to mark current scan_context failed when submit failed many times?
     if (state.ok()) {
@@ -543,7 +586,7 @@ void ScannerContext::push_back_scanner_and_reschedule(VScannerSPtr scanner) {
             // _put_and_rescheduler_count->update(1);
             _mark_closed_scanners.push_back(scanner);
         } else {
-            _scanners.push_back(scanner);
+            _scanners.push_front(scanner);
         }
         scanners_size = _scanners.size();
     }
@@ -558,7 +601,8 @@ void ScannerContext::push_back_scanner_and_reschedule(VScannerSPtr scanner) {
         _finish_dependency->set_ready_to_finish();
     }
 
-    if (should_be_scheduled() && scanners_size > 0) {
+    if (false && scanners_size) {
+    // if (should_be_scheduled() && scanners_size > 0) {
         _put_and_rescheduler_count->update(1);
         auto state = _scanner_scheduler->submit(this);
         if (state.ok()) {

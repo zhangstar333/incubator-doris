@@ -190,8 +190,9 @@ Status VScanNode::alloc_resource(RuntimeState* state) {
             if (_scanner_ctx) {
                 DCHECK(!_eos && _num_scanners->value() > 0);
                 RETURN_IF_ERROR(_scanner_ctx->init());
-                RETURN_IF_ERROR(
-                        _state->exec_env()->scanner_scheduler()->submit(_scanner_ctx.get()));
+                // RETURN_IF_ERROR(
+                //         _state->exec_env()->scanner_scheduler()->submit(_scanner_ctx.get()));
+                _state->exec_env()->scanner_scheduler()->_schedule_scanners(_scanner_ctx.get());
             }
             if (_shared_scan_opt) {
                 _shared_scanner_controller->set_scanner_context(id(),

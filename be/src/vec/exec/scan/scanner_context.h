@@ -152,11 +152,12 @@ public:
     }
 
     int get_available_thread_slot_num() {
-        int thread_slot_num = 0;
-        thread_slot_num = (allowed_blocks_num() + _block_per_scanner - 1) / _block_per_scanner;
-        thread_slot_num = std::min(thread_slot_num, _max_thread_num - _num_running_scanners);
-        thread_slot_num = std::max(2,thread_slot_num );
-        return thread_slot_num;
+        // int thread_slot_num = 0;
+        // thread_slot_num = (allowed_blocks_num() + _block_per_scanner - 1) / _block_per_scanner;
+        // thread_slot_num = std::min(thread_slot_num, _max_thread_num - _num_running_scanners);
+        // thread_slot_num = std::max(5,thread_slot_num );
+        // return thread_slot_num;
+        return _scanners.size();
     }
 
     int32_t allowed_blocks_num() const {

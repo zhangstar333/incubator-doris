@@ -118,8 +118,8 @@ Status ScannerScheduler::init(ExecEnv* env) {
     }
 
     // 2. local scan thread pool
-    _local_scan_thread_pool = std::make_unique<PriorityThreadPool>(
-            config::doris_scanner_thread_pool_thread_num,
+    _local_scan_thread_pool = std::make_unique<FifoThreadPool>(
+            CpuInfo::num_cores() * 2,
             config::doris_scanner_thread_pool_queue_size, "local_scan");
 
     // 3. remote scan thread pool
@@ -259,12 +259,16 @@ void ScannerScheduler::_schedule_scanners(ScannerContext* ctx) {
                                 nice};
                         ret = _task_group_local_scan_queue->push_back(scan_task);
                     } else {
-                        PriorityThreadPool::Task task;
+                        // PriorityThreadPool::Task task;
+                        WorkThreadPool<false>::Task task;
                         task.work_function = [this, scanner = *iter, ctx] {
                             this->_scanner_scan(this, ctx, scanner);
                         };
                         task.priority = nice;
                         ret = _local_scan_thread_pool->offer(task);
+                        if (!ret) {
+                            LOG(INFO)<<"_local_scan_thread_pool_local_scan_thread_pool_local_scan_thread_pool";
+                        }
                     }
                 } else {
                     PriorityThreadPool::Task task;
@@ -274,6 +278,8 @@ void ScannerScheduler::_schedule_scanners(ScannerContext* ctx) {
                     task.priority = nice;
                     ret = _remote_scan_thread_pool->offer(task);
                 }
+                (*iter)->set_queue_pool_size(_local_scan_thread_pool->get_queue_size());
+                (*iter)->update_wait_offer_timer();
                 if (ret) {
                     this_run.erase(iter++);
                 } else {

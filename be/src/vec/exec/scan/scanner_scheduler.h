@@ -78,7 +78,7 @@ public:
 
     int remote_thread_pool_max_size() const { return _remote_thread_pool_max_size; }
 
-private:
+public:
     // scheduling thread function
     void _schedule_thread(int queue_id);
     // schedule scanners in a certain ScannerContext
@@ -110,7 +110,7 @@ private:
     // _local_scan_thread_pool is for local scan task(typically, olap scanner)
     // _remote_scan_thread_pool is for remote scan task(cold data on s3, hdfs, etc.)
     // _limited_scan_thread_pool is a special pool for queries with resource limit
-    std::unique_ptr<PriorityThreadPool> _local_scan_thread_pool;
+    std::unique_ptr<FifoThreadPool> _local_scan_thread_pool;
     std::unique_ptr<PriorityThreadPool> _remote_scan_thread_pool;
     std::unique_ptr<ThreadPool> _limited_scan_thread_pool;
 

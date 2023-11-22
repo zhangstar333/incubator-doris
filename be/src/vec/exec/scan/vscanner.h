@@ -142,6 +142,17 @@ public:
         }
     }
 
+    void set_queue_pool_size(int queue_pool_size) {
+        _queue_pool_size = queue_pool_size;
+    }
+    auto get_queue_pool_size() const {
+        return _queue_pool_size;
+    }
+
+    void update_wait_offer_timer() { _scanner_wait_offer_timer += _watch.elapsed_time(); }
+
+    int64_t get_scanner_wait_offer_timer() const { return _scanner_wait_offer_timer; }
+
     void update_wait_worker_timer() { _scanner_wait_worker_timer += _watch.elapsed_time(); }
 
     int64_t get_scanner_wait_worker_timer() const { return _scanner_wait_worker_timer; }
@@ -243,7 +254,9 @@ protected:
     // Do not use ScopedTimer. There is no guarantee that, the counter
     ThreadCpuStopWatch _cpu_watch;
     int64_t _scanner_wait_worker_timer = 0;
+    int64_t _scanner_wait_offer_timer = 0;
     int64_t _scan_cpu_timer = 0;
+    int64_t _queue_pool_size = 0;
 
     bool _is_load = false;
     // set to true after decrease the "_num_unfinished_scanners" in scanner context

@@ -60,6 +60,7 @@ public:
 
     Status get_block_from_queue(RuntimeState* state, vectorized::BlockUPtr* block, bool* eos,
                                 int id, bool wait = false) override {
+        // _get_block_from_queue_counter->update(1);
         {
             std::unique_lock l(_transfer_lock);
             if (state->is_cancelled()) {
@@ -70,10 +71,18 @@ public:
                 return _process_status;
             }
         }
-
         {
-            std::unique_lock<std::mutex> l(*_queue_mutexs[id]);
-            if (_blocks_queues[id].empty()) {
+            std::unique_lock l(_scanners_lock);
+            if (!this->_scanners.empty()) {
+                this->reschedule_scanner_ctx();
+            }
+        }
+        {
+            SCOPED_TIMER(_have_get_block_from_queue);
+            // std::unique_lock<std::mutex> l(*_queue_mutexs[id]);
+            // std::unique_ptr<vectorized::Block> b;
+            if (!_blocks_queues_free[id].try_dequeue(*block)) {
+            // if (_blocks_queues[id].empty()) {
                 *eos = _is_finished || _should_stop;
                 return Status::OK();
             }
@@ -81,10 +90,12 @@ public:
                 *eos = true;
                 return Status::OK();
             }
-            *block = std::move(_blocks_queues[id].front());
-            _blocks_queues[id].pop_front();
-
-            if (_blocks_queues[id].empty() && _data_dependency) {
+            // b->swap(*(block->get()));
+            // *block = std::move(_blocks_queues[id].front());
+            // _blocks_queues[id].pop_front();
+            // _get_block_no_success_queue_counter->update(1);
+            if (_blocks_queues_free[id].size_approx() && _data_dependency) {
+            // if (_blocks_queues[id].empty() && _data_dependency) {
                 _data_dependency->block_reading();
             }
         }
@@ -96,7 +107,8 @@ public:
     bool done() override { return _is_finished || _should_stop; }
 
     void append_blocks_to_queue(std::vector<vectorized::BlockUPtr>& blocks) override {
-        const int queue_size = _blocks_queues.size();
+        // const int queue_size = _blocks_queues.size();
+        const int queue_size = _blocks_queues_free.size();
         const int block_size = blocks.size();
         if (block_size == 0) {
             return;
@@ -153,9 +165,10 @@ public:
             for (int i = 0; i < queue_size && i < block_size; ++i) {
                 int queue = _next_queue_to_feed;
                 {
-                    std::lock_guard<std::mutex> l(*_queue_mutexs[queue]);
+                    // std::lock_guard<std::mutex> l(*_queue_mutexs[queue]);
                     for (int j = i; j < block_size; j += queue_size) {
-                        _blocks_queues[queue].emplace_back(std::move(blocks[j]));
+                        // _blocks_queues[queue].emplace_back(std::move(blocks[j]));
+                        _blocks_queues_free[queue].enqueue(std::move(blocks[j]));
                     }
                     if (_data_dependency) {
                         _data_dependency->set_ready_for_read();
@@ -167,15 +180,28 @@ public:
         _current_used_bytes += local_bytes;
     }
 
+    // bool empty_in_queue(int id) override {
+    //     std::unique_lock<std::mutex> l(*_queue_mutexs[id]);
+    //     auto res = _blocks_queues[id].empty();
+    //     l.unlock();
+    //     if (res) {
+    //         _wait_by_empty_queue_counter->update(1);
+    //     }
+    //     return res;
+    // }
     bool empty_in_queue(int id) override {
-        std::unique_lock<std::mutex> l(*_queue_mutexs[id]);
-        return _blocks_queues[id].empty();
+        auto res = _blocks_queues_free[id].size_approx();
+        if (res) {
+            _wait_by_empty_queue_counter->update(1);
+        }
+        return res == 0;
     }
 
     Status init() override {
         for (int i = 0; i < _num_parallel_instances; ++i) {
             _queue_mutexs.emplace_back(std::make_unique<std::mutex>());
-            _blocks_queues.emplace_back(std::list<vectorized::BlockUPtr>());
+            // _blocks_queues.emplace_back();
+            _blocks_queues_free.emplace_back();
         }
         RETURN_IF_ERROR(ScannerContext::init());
         if (_need_colocate_distribute) {
@@ -229,6 +255,7 @@ private:
     int _next_queue_to_feed = 0;
     std::vector<std::unique_ptr<std::mutex>> _queue_mutexs;
     std::vector<std::list<vectorized::BlockUPtr>> _blocks_queues;
+    std::vector<moodycamel::ConcurrentQueue<vectorized::BlockUPtr>> _blocks_queues_free;
     std::atomic_int64_t _current_used_bytes = 0;
 
     const std::vector<int>& _col_distribute_ids;
