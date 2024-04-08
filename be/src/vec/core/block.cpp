@@ -728,11 +728,18 @@ void Block::shuffle_columns(const std::vector<int>& result_column_ids) {
     swap(Block {tmp_data});
 }
 
+//this function is deprecated, maybe need removed, and could use new function update_xxhash
 void Block::update_hash(SipHash& hash) const {
     for (size_t row_no = 0, num_rows = rows(); row_no < num_rows; ++row_no) {
         for (const auto& col : data) {
             col.column->update_hash_with_value(row_no, hash);
         }
+    }
+}
+
+void Block::update_xxhash(uint64_t& hash) const {
+    for (const auto& col : data) {
+        col.column->update_xxHash_with_value(0, col.column->size(), hash, nullptr);
     }
 }
 

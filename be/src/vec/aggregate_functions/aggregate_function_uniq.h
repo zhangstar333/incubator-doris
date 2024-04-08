@@ -67,7 +67,6 @@ struct AggregateFunctionUniqExactData {
 
     using Set = flat_hash_set<Key, Hash>;
 
-    // TODO: replace SipHash with xxhash to speed up
     static UInt128 ALWAYS_INLINE get_key(const StringRef& value) {
         auto hash_value = XXH_INLINE_XXH128(value.data, value.size, 0);
         return UInt128 {hash_value.high64, hash_value.low64};

@@ -103,17 +103,17 @@ Status EngineChecksumTask::_compute_checksum() {
     }
 
     bool eof = false;
-    SipHash block_hash;
+    uint64_t block_hash = 0;
     uint64_t rows = 0;
     while (!eof) {
         RETURN_IF_ERROR(reader.next_block_with_aggregation(&block, &eof));
         rows += block.rows();
 
-        block.update_hash(block_hash);
+        block.update_xxhash(block_hash);
         block.clear_column_data();
     }
-    uint64_t checksum64 = block_hash.get64();
-    *_checksum = (checksum64 >> 32) ^ (checksum64 & 0xffffffff);
+
+    *_checksum = (block_hash >> 32) ^ (block_hash & 0xffffffff);
 
     LOG(INFO) << "success to finish compute checksum. tablet_id = " << _tablet_id
               << ", rows = " << rows << ", checksum=" << *_checksum

@@ -250,8 +250,12 @@ public:
     /** Updates SipHash of the Block, using update method of columns.
       * Returns hash for block, that could be used to differentiate blocks
       *  with same structure, but different data.
+      *
+      * this function is deprecated, maybe need removed, and could use new function update_xxhash
       */
     void update_hash(SipHash& hash) const;
+
+    void update_xxhash(uint64_t& hash) const;
 
     /** Get block data in string. */
     std::string dump_data(size_t begin = 0, size_t row_limit = 100) const;
