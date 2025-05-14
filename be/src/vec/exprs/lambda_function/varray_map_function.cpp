@@ -106,6 +106,8 @@ public:
             }
         }
 
+        RETURN_IF_ERROR(_check_column_ref_gap(children[0], gap));
+
         ///* array_map(lambda,arg1,arg2,.....) *///
         //1. child[1:end]->execute(src_block)
         doris::vectorized::ColumnNumbers arguments(children.size() - 1);
@@ -199,7 +201,7 @@ public:
         Block lambda_block;
         auto column_size = names.size();
         MutableColumns columns(column_size);
-        while (args_info.current_row_idx < block->rows()) {
+        do {
             bool mem_reuse = lambda_block.mem_reuse();
             for (int i = 0; i < column_size; i++) {
                 if (mem_reuse) {
@@ -265,8 +267,7 @@ public:
             }
             result_col->insert_range_from(*res_col, 0, res_col->size());
             lambda_block.clear_column_data(column_size);
-        }
-
+        } while (args_info.current_row_idx < block->rows());
         //4. get the result column after execution, reassemble it into a new array column, and return.
         ColumnWithTypeAndName result_arr;
         if (result_type->is_nullable()) {
@@ -309,6 +310,23 @@ public:
     }
 
 private:
+    Status _check_column_ref_gap(VExprSPtr expr, int columns_size) {
+        for (const auto& child : expr->children()) {
+            if (child->is_column_ref()) {
+                auto* ref = static_cast<VColumnRef*>(child.get());
+                if (ref->get_gap() > columns_size) {
+                    return Status::InternalError(
+                            "lambda arg's gap cannot be greater than column size");
+                }
+            } else if (child->is_lambda_func()) {
+                continue;
+            } else {
+                return _check_column_ref_gap(child, columns_size);
+            }
+        }
+        return Status::OK();
+    }
+
     bool _contains_column_id(const std::vector<int>& output_slot_ref_indexs, int id) {
         const auto it = std::find(output_slot_ref_indexs.begin(), output_slot_ref_indexs.end(), id);
         return it != output_slot_ref_indexs.end();
@@ -319,6 +337,8 @@ private:
             if (child->is_column_ref()) {
                 auto* ref = static_cast<VColumnRef*>(child.get());
                 ref->set_gap(gap);
+            } else if (child->is_lambda_func()) {
+                continue;
             } else {
                 _set_column_ref_column_id(child, gap);
             }
