@@ -30,6 +30,7 @@ import org.apache.doris.catalog.RangePartitionItem;
 import org.apache.doris.catalog.TableIf;
 import org.apache.doris.common.FeConstants;
 import org.apache.doris.common.Pair;
+import org.apache.doris.datasource.iceberg.IcebergExternalTable;
 import org.apache.doris.nereids.CascadesContext;
 import org.apache.doris.nereids.memo.Group;
 import org.apache.doris.nereids.memo.GroupExpression;
@@ -1146,6 +1147,17 @@ public class StatsCalculator extends DefaultPlanVisitor<Statistics, Void> {
                 for (Long id : olapScan.getSelectedPartitionIds()) {
                     selectedPartitionNames.add(olapScan.getTable().getPartition(id).getName());
                 }
+            }
+        }
+        // Adjust rowCount for partition-pruned Iceberg external tables
+        if (catalogRelation instanceof LogicalFileScan
+                && ((LogicalFileScan) catalogRelation).getTable() instanceof IcebergExternalTable) {
+            LogicalFileScan fileScan = (LogicalFileScan) catalogRelation;
+            LogicalFileScan.SelectedPartitions selectedParts = fileScan.getSelectedPartitions();
+            if (selectedParts.isPruned && selectedParts.totalPartitionNum > 0) {
+                int selectedCount = selectedParts.selectedPartitions.size();
+                rowCount = rowCount * selectedCount / selectedParts.totalPartitionNum;
+                rowCount = Math.max(1, rowCount);
             }
         }
         for (SlotReference slotReference : slotSet) {
