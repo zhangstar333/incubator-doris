@@ -19,6 +19,7 @@ package org.apache.doris.nereids.rules.rewrite;
 
 import org.apache.doris.catalog.PartitionItem;
 import org.apache.doris.datasource.ExternalTable;
+import org.apache.doris.datasource.iceberg.IcebergExternalTable;
 import org.apache.doris.nereids.CascadesContext;
 import org.apache.doris.nereids.rules.Rule;
 import org.apache.doris.nereids.rules.RuleType;
@@ -38,7 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-
 /**
  * Used to prune partition of file scan. For different external tables, there is no unified partition prune method.
  * For example, Hive is using hive meta store api to get partitions. Iceberg is using Iceberg api to get FileScanTask,
@@ -58,7 +58,13 @@ public class PruneFileScanPartition extends OneRewriteRuleFactory {
                     ExternalTable tbl = scan.getTable();
 
                     SelectedPartitions selectedPartitions;
-                    if (tbl.supportInternalPartitionPruned()) {
+                    if (tbl instanceof IcebergExternalTable
+                            && !((IcebergExternalTable) tbl).isAllIdentityPartitions()) {
+                        // Iceberg tables with non-identity transforms (year/month/day/hour/bucket/truncate)
+                        // use Iceberg's ResidualEvaluator for partition pruning
+                        selectedPartitions = pruneIcebergWithResidualEvaluator(
+                                (IcebergExternalTable) tbl, filter, scan);
+                    } else if (tbl.supportInternalPartitionPruned()) {
                         selectedPartitions = pruneExternalPartitions(tbl, filter, scan, ctx.cascadesContext);
                     } else {
                         // set isPruned so that it won't go pass the partition prune again
@@ -67,6 +73,27 @@ public class PruneFileScanPartition extends OneRewriteRuleFactory {
                     LogicalFileScan rewrittenScan = scan.withSelectedPartitions(selectedPartitions);
                     return new LogicalFilter<>(filter.getConjuncts(), rewrittenScan);
                 }).toRule(RuleType.FILE_SCAN_PARTITION_PRUNE);
+    }
+
+    /**
+     * Prune Iceberg partitions using Iceberg's ResidualEvaluator.
+     * This handles all partition transform types (year, month, day, hour, bucket, truncate, identity)
+     * by delegating to the Iceberg library's native partition evaluation.
+     */
+    private SelectedPartitions pruneIcebergWithResidualEvaluator(
+            IcebergExternalTable tbl, LogicalFilter<LogicalFileScan> filter, LogicalFileScan scan) {
+        Map<String, PartitionItem> nameToPartitionItem = scan.getSelectedPartitions().selectedPartitions;
+        List<String> prunedPartitions = tbl.pruneWithResidualEvaluator(
+                filter.getPredicate(), nameToPartitionItem);
+
+        Map<String, PartitionItem> selectedPartitionItems = Maps.newHashMap();
+        for (String name : prunedPartitions) {
+            PartitionItem item = nameToPartitionItem.get(name);
+            if (item != null) {
+                selectedPartitionItems.put(name, item);
+            }
+        }
+        return new SelectedPartitions(nameToPartitionItem.size(), selectedPartitionItems, true);
     }
 
     private SelectedPartitions pruneExternalPartitions(ExternalTable externalTable,

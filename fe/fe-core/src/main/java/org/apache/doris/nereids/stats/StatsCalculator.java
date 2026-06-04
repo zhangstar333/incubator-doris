@@ -1149,17 +1149,6 @@ public class StatsCalculator extends DefaultPlanVisitor<Statistics, Void> {
                 }
             }
         }
-        // Adjust rowCount for partition-pruned Iceberg external tables
-        if (catalogRelation instanceof LogicalFileScan
-                && ((LogicalFileScan) catalogRelation).getTable() instanceof IcebergExternalTable) {
-            LogicalFileScan fileScan = (LogicalFileScan) catalogRelation;
-            LogicalFileScan.SelectedPartitions selectedParts = fileScan.getSelectedPartitions();
-            if (selectedParts.isPruned && selectedParts.totalPartitionNum > 0) {
-                int selectedCount = selectedParts.selectedPartitions.size();
-                rowCount = rowCount * selectedCount / selectedParts.totalPartitionNum;
-                rowCount = Math.max(1, rowCount);
-            }
-        }
         for (SlotReference slotReference : slotSet) {
             String colName = slotReference.getColumn().isPresent()
                     ? slotReference.getColumn().get().getName()
@@ -1197,6 +1186,20 @@ public class StatsCalculator extends DefaultPlanVisitor<Statistics, Void> {
         }
         if (hasUnknownCol && ConnectContext.get() != null && ConnectContext.get().getStatementContext() != null) {
             ConnectContext.get().getStatementContext().setHasUnknownColStats(true);
+        }
+        // Adjust rowCount for partition-pruned Iceberg external tables.
+        // Must be after the column loop because column stats (cache.count) are at
+        // table level and would otherwise override the partition-pruned rowCount via
+        // Math.max(rowCount, cache.count) inside the column loop.
+        if (catalogRelation instanceof LogicalFileScan
+                && ((LogicalFileScan) catalogRelation).getTable() instanceof IcebergExternalTable) {
+            LogicalFileScan fileScan = (LogicalFileScan) catalogRelation;
+            LogicalFileScan.SelectedPartitions selectedParts = fileScan.getSelectedPartitions();
+            if (selectedParts.isPruned && selectedParts.totalPartitionNum > 0) {
+                int selectedCount = selectedParts.selectedPartitions.size();
+                rowCount = rowCount * selectedCount / selectedParts.totalPartitionNum;
+                rowCount = Math.max(1, rowCount);
+            }
         }
         return normalizeCatalogRelationColumnStatsRowCount(rowCount, columnStatisticBuilderMap, deltaRowCount);
     }
