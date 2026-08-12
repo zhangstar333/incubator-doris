@@ -117,6 +117,7 @@ public class PaimonJniScanner extends JniScanner {
     private List<String> paimonAllFieldNames;
     private List<DataType> paimonDataTypeList;
     private List<PaimonVariantProjection> variantProjections;
+    private List<PaimonVariantProjection.Materializer> variantMaterializers;
     private RecordReader.RecordIterator<InternalRow> recordIterator = null;
     private final ClassLoader classLoader;
     private PreExecutionAuthenticator preExecutionAuthenticator;
@@ -427,6 +428,21 @@ public class PaimonJniScanner extends JniScanner {
     private int readAndProcessNextBatch() throws IOException {
         int rows = 0;
         try {
+            if (variantMaterializers == null) {
+                variantMaterializers = new ArrayList<>(variantProjections.size());
+                for (int i = 0; i < variantProjections.size(); i++) {
+                    PaimonVariantProjection projection = variantProjections.get(i);
+                    variantMaterializers.add(projection == null
+                            ? null
+                            : projection.newMaterializer(vectorTable.getColumn(i)));
+                }
+            }
+            for (PaimonVariantProjection.Materializer materializer : variantMaterializers) {
+                if (materializer != null) {
+                    materializer.startBatch();
+                }
+            }
+
             if (recordIterator == null) {
                 recordIterator = readBatchWithMetrics();
             }
@@ -439,11 +455,16 @@ public class PaimonJniScanner extends JniScanner {
                     rows++;
                     columnValue.setOffsetRow(record);
                     for (int i = 0; i < fields.length; i++) {
-                        columnValue.setIdx(
-                                i, types[i], paimonDataTypeList.get(i), variantProjections.get(i));
-                        appendData(i, columnValue);
+                        PaimonVariantProjection.Materializer materializer = variantMaterializers.get(i);
+                        if (materializer == null) {
+                            columnValue.setIdx(i, types[i], paimonDataTypeList.get(i));
+                            appendData(i, columnValue);
+                        } else {
+                            materializer.append(record, i);
+                        }
                     }
                     if (rows >= batchSize) {
+                        flushVariantMaterializers();
                         if (fields.length == 0) {
                             vectorTable.appendVirtualData(rows);
                         }
@@ -457,6 +478,9 @@ public class PaimonJniScanner extends JniScanner {
                 releaseRecordIterator();
                 recordIterator = readBatchWithMetrics();
             }
+            long materializeStart = System.nanoTime();
+            flushVariantMaterializers();
+            appendDataTime += System.nanoTime() - materializeStart;
             if (fields.length == 0 && rows > 0) {
                 vectorTable.appendVirtualData(rows);
             }
@@ -469,6 +493,17 @@ public class PaimonJniScanner extends JniScanner {
             throw new IOException(e);
         }
         return rows;
+    }
+
+    private void flushVariantMaterializers() {
+        if (variantMaterializers == null) {
+            return;
+        }
+        for (PaimonVariantProjection.Materializer materializer : variantMaterializers) {
+            if (materializer != null) {
+                materializer.flush();
+            }
+        }
     }
 
     private RecordReader.RecordIterator<InternalRow> readBatchWithMetrics() throws IOException {

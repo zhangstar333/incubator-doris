@@ -17,7 +17,12 @@
 
 package org.apache.doris.paimon;
 
+import org.apache.doris.common.jni.utils.OffHeap;
+import org.apache.doris.common.jni.vec.ColumnType;
+import org.apache.doris.common.jni.vec.VectorTable;
+
 import org.apache.paimon.data.GenericRow;
+import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.data.columnar.ColumnVector;
 import org.apache.paimon.data.columnar.heap.HeapBytesVector;
 import org.apache.paimon.data.columnar.heap.HeapRowVector;
@@ -25,12 +30,18 @@ import org.apache.paimon.data.variant.GenericVariant;
 import org.apache.paimon.data.variant.Variant;
 import org.apache.paimon.data.variant.VariantMetadataUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
 
 public class PaimonVariantProjectionTest {
+    @BeforeClass
+    public static void setUpClass() {
+        OffHeap.setTesting();
+    }
+
     @Test
     public void testBuildsMetadataMarkedReadTypeAndPartialVariant() {
         PaimonVariantProjection projection = PaimonVariantProjection.create(
@@ -52,7 +63,7 @@ public class PaimonVariantProjectionTest {
                 GenericVariant.fromJson("\"alice\""),
                 GenericVariant.fromJson("\"beijing\""),
                 null);
-        Variant result = projection.materialize(extracted, 0);
+        Variant result = materialize(projection, extracted);
         Assert.assertEquals(
                 "{\"name\":\"alice\",\"profile\":{\"city\":\"beijing\"}}",
                 result.toJson());
@@ -66,8 +77,8 @@ public class PaimonVariantProjectionTest {
                         Collections.singletonList("missing")),
                 "UTC");
 
-        Variant result = projection.materialize(
-                projectedRecord(GenericVariant.fromJson("null"), null), 0);
+        Variant result = materialize(
+                projection, projectedRecord(GenericVariant.fromJson("null"), null));
         Assert.assertEquals("{\"present\":null}", result.toJson());
     }
 
@@ -95,12 +106,56 @@ public class PaimonVariantProjectionTest {
 
         Assert.assertEquals(
                 "{\"name\":\"alice\"}",
-                projection.materialize(GenericRow.of(extractedRows.getRow(0)), 0).toJson());
+                materialize(projection, GenericRow.of(extractedRows.getRow(0))).toJson());
         Assert.assertEquals(
                 "{\"name\":\"bob\"}",
-                projection.materialize(GenericRow.of(extractedRows.getRow(1)), 0).toJson());
+                materialize(projection, GenericRow.of(extractedRows.getRow(1))).toJson());
         Assert.assertEquals(
-                "{}", projection.materialize(GenericRow.of(extractedRows.getRow(2)), 0).toJson());
+                "{}", materialize(projection, GenericRow.of(extractedRows.getRow(2))).toJson());
+    }
+
+    @Test
+    public void testMaterializesRowsWithOneBatchBuilder() {
+        PaimonVariantProjection projection = PaimonVariantProjection.create(
+                Arrays.asList(
+                        Collections.singletonList("name"),
+                        Arrays.asList("profile", "city")),
+                "UTC");
+        GenericVariant first = GenericVariant.fromJson(
+                "{\"name\":\"alice\",\"profile\":{\"city\":\"beijing\"}}");
+        GenericVariant second = GenericVariant.fromJson(
+                "{\"profile\":{\"city\":\"shanghai\"},\"name\":\"bob\"}");
+        InternalRow[] rows = new InternalRow[] {
+                projectedRecord(
+                        first.getFieldByKey("name"),
+                        first.getFieldByKey("profile").getFieldByKey("city")),
+                projectedRecord(
+                        second.getFieldByKey("name"),
+                        second.getFieldByKey("profile").getFieldByKey("city"))
+        };
+
+        ColumnType variantType = ColumnType.parseType("v", "variant");
+        VectorTable table = VectorTable.createWritableTable(
+                new ColumnType[] {variantType}, new String[] {"v"}, rows.length);
+        try {
+            PaimonVariantProjection.Materializer materializer =
+                    projection.newMaterializer(table.getColumn(0));
+            materializer.startBatch();
+            for (InternalRow row : rows) {
+                materializer.append(row, 0);
+            }
+            Assert.assertEquals(2, materializer.rowCount());
+            materializer.flush();
+
+            Assert.assertEquals(
+                    "{\"name\":\"alice\",\"profile\":{\"city\":\"beijing\"}}",
+                    readVariant(table, 0).toJson());
+            Assert.assertEquals(
+                    "{\"name\":\"bob\",\"profile\":{\"city\":\"shanghai\"}}",
+                    readVariant(table, 1).toJson());
+        } finally {
+            table.close();
+        }
     }
 
     private static void appendVariant(
@@ -128,6 +183,48 @@ public class PaimonVariantProjectionTest {
         HeapRowVector extracted = new HeapRowVector(1, fields);
         extracted.appendRow();
         return GenericRow.of(extracted.getRow(0));
+    }
+
+    private static Variant materialize(
+            PaimonVariantProjection projection, InternalRow projectedRow) {
+        ColumnType variantType = ColumnType.parseType("v", "variant");
+        VectorTable table = VectorTable.createWritableTable(
+                new ColumnType[] {variantType}, new String[] {"v"}, 1);
+        try {
+            PaimonVariantProjection.Materializer materializer =
+                    projection.newMaterializer(table.getColumn(0));
+            materializer.startBatch();
+            materializer.append(projectedRow, 0);
+            materializer.flush();
+            return readVariant(table, 0);
+        } finally {
+            table.close();
+        }
+    }
+
+    private static Variant readVariant(VectorTable table, int rowIndex) {
+        long meta = table.getMetaAddress();
+        long nullMap = OffHeap.getLong(null, meta + 8);
+        Assert.assertFalse(OffHeap.getBoolean(null, nullMap + rowIndex));
+
+        long metadataOffsets = OffHeap.getLong(null, meta + 24);
+        long metadataBytes = OffHeap.getLong(null, meta + 32);
+        long metadataIds = OffHeap.getLong(null, meta + 40);
+        long valueOffsets = OffHeap.getLong(null, meta + 48);
+        long valueBytes = OffHeap.getLong(null, meta + 56);
+
+        int metadataId = OffHeap.getInt(null, metadataIds + (long) rowIndex * Integer.BYTES);
+        int metadataStart = OffHeap.getInt(
+                null, metadataOffsets + (long) metadataId * Integer.BYTES);
+        int metadataEnd = OffHeap.getInt(
+                null, metadataOffsets + (long) (metadataId + 1) * Integer.BYTES);
+        int valueStart = OffHeap.getInt(
+                null, valueOffsets + (long) rowIndex * Integer.BYTES);
+        int valueEnd = OffHeap.getInt(
+                null, valueOffsets + (long) (rowIndex + 1) * Integer.BYTES);
+        return new GenericVariant(
+                OffHeap.getByte(null, valueBytes + valueStart, valueEnd - valueStart),
+                OffHeap.getByte(null, metadataBytes + metadataStart, metadataEnd - metadataStart));
     }
 
     @Test

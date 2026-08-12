@@ -17,10 +17,14 @@
 
 package org.apache.doris.paimon;
 
+import org.apache.doris.common.jni.vec.ColumnType;
+import org.apache.doris.common.jni.vec.VectorColumn;
+
 import org.apache.paimon.data.DataGetters;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.data.variant.GenericVariant;
 import org.apache.paimon.data.variant.GenericVariantBuilder;
+import org.apache.paimon.data.variant.GenericVariantUtil;
 import org.apache.paimon.data.variant.Variant;
 import org.apache.paimon.data.variant.VariantMetadataUtils;
 import org.apache.paimon.types.DataField;
@@ -28,16 +32,18 @@ import org.apache.paimon.types.DataTypes;
 import org.apache.paimon.types.RowType;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Bridges Doris Variant access paths to Paimon's metadata-marked Variant extraction RowType.
+ * Query-level plan for Paimon Variant access-path projection.
  *
- * <p>Paimon returns one Variant value for every requested path. Doris expressions still consume a
- * single Variant slot, so this class rebuilds a partial object containing only those paths. Missing
- * paths are omitted, while a JSON null remains a present Variant null value.
+ * <p>Paimon returns one Variant value for every requested path. Doris expressions consume one
+ * Variant slot, so the extracted values are merged into a partial object. The path tree is built
+ * once, while {@link Materializer} uses one builder for all rows in a Doris output batch. This
+ * avoids constructing a final Variant and exact-sized value and metadata arrays for every row.
  */
 final class PaimonVariantProjection {
     private static final String FIELD_NAME_PREFIX = "__doris_variant_field_";
@@ -47,18 +53,23 @@ final class PaimonVariantProjection {
 
     private final RowType readType;
     private final PathNode root;
+    private final int objectCount;
+    private final long projectionValueOverhead;
 
-    private PaimonVariantProjection(RowType readType, PathNode root) {
+    private PaimonVariantProjection(
+            RowType readType, PathNode root, int objectCount, long projectionValueOverhead) {
         this.readType = readType;
         this.root = root;
+        this.objectCount = objectCount;
+        this.projectionValueOverhead = projectionValueOverhead;
     }
 
     /**
      * Creates the metadata-marked RowType understood by Paimon's Variant reader.
      *
-     * <p>Each Doris access path becomes one Variant field in {@link #readType}. Returning null
-     * means that the complete Variant column must be read instead. This all-or-nothing fallback is
-     * important because Doris still evaluates every original element_at expression after the scan.
+     * <p>Returning null means that the complete Variant column must be read instead. This
+     * all-or-nothing fallback is important because Doris still evaluates every original
+     * element_at expression after the scan.
      */
     static PaimonVariantProjection create(List<List<String>> paths, String timeZone) {
         if (paths == null || paths.isEmpty()) {
@@ -80,32 +91,19 @@ final class PaimonVariantProjection {
                     DataTypes.VARIANT(),
                     VariantMetadataUtils.buildVariantMetadata(toPaimonPath(path), false, timeZone)));
         }
-        return new PaimonVariantProjection(new RowType(fields), root);
+        int objectCount = root.assignObjectIndexes(0);
+        return new PaimonVariantProjection(
+                new RowType(fields), root, objectCount, root.valueOverheadUpperBound());
     }
 
-    /** Returns the logical type passed to Paimon's ReadBuilder.withReadType. */
     RowType readType() {
         return readType;
     }
 
-    /**
-     * Rebuilds the extracted path values as one partial Variant object for Doris.
-     *
-     * <p>For example, Paimon returns separate fields for $.name and $.profile.city. This method
-     * turns them into {"name": ..., "profile": {"city": ...}}, so the unchanged Doris
-     * element_at expressions can continue to read a normal Variant slot.
-     */
-    Variant materialize(DataGetters record, int fieldIndex) {
-        InternalRow extracted = record.getRow(fieldIndex, readType.getFieldCount());
-        GenericVariantBuilder builder = new GenericVariantBuilder(false);
-        appendObject(builder, root, extracted);
-        return builder.result();
+    Materializer newMaterializer(VectorColumn outputColumn) {
+        return new Materializer(outputColumn);
     }
 
-    /**
-     * Checks whether a path can be represented unambiguously by Paimon's current Variant metadata.
-     * Array indexes and delimiter-bearing keys fall back to reading the complete Variant.
-     */
     private static boolean supportsObjectPath(List<String> path) {
         if (path == null || path.isEmpty()) {
             return false;
@@ -133,29 +131,171 @@ final class PaimonVariantProjection {
         return true;
     }
 
-    /** Converts Doris path segments such as [profile, city] to Paimon's $.profile.city syntax. */
     private static String toPaimonPath(List<String> path) {
         return "$." + String.join(".", path);
     }
 
-    /** Returns whether this path node or any descendant was present in the source Variant. */
-    private static boolean hasValue(PathNode node, InternalRow extracted) {
-        if (node.fieldIndex >= 0) {
-            return hasExtractedVariant(extracted, node.fieldIndex);
-        }
-        for (PathNode child : node.children.values()) {
-            if (hasValue(child, extracted)) {
-                return true;
+    /** Batch-scoped state for merging projected paths into the encoded JNI Variant column. */
+    final class Materializer {
+        private final VectorColumn outputColumn;
+        private final List<ArrayList<GenericVariantBuilder.FieldEntry>> fieldEntries;
+        private final GenericVariant[] extractedValues =
+                new GenericVariant[readType.getFieldCount()];
+        private GenericVariantBuilder builder;
+        private int[] valueOffsets = new int[129];
+        private boolean[] nullRows = new boolean[128];
+        private int rowCount;
+        private long metadataInputBytes;
+
+        private Materializer(VectorColumn outputColumn) {
+            this.outputColumn = outputColumn;
+            this.fieldEntries = new ArrayList<>(objectCount);
+            for (int i = 0; i < objectCount; i++) {
+                fieldEntries.add(new ArrayList<>());
             }
         }
-        return false;
+
+        void startBatch() {
+            builder = new GenericVariantBuilder(false);
+            rowCount = 0;
+            metadataInputBytes = 0;
+        }
+
+        void append(DataGetters record, int fieldIndex) {
+            if (builder == null) {
+                throw new IllegalStateException("Projected Variant batch has not been started");
+            }
+            boolean isNull = record.isNullAt(fieldIndex);
+            if (!isNull) {
+                InternalRow extracted = record.getRow(fieldIndex, readType.getFieldCount());
+                RowSizeEstimate estimate = readExtractedValues(extracted);
+                if (shouldFlushBefore(estimate)) {
+                    flush();
+                    startBatch();
+                }
+                metadataInputBytes += estimate.metadataBytes;
+            }
+
+            ensureRowCapacity(rowCount + 1);
+            valueOffsets[rowCount] = builder.getWritePos();
+            nullRows[rowCount] = isNull;
+            if (!isNull) {
+                try {
+                    appendObject(root);
+                } finally {
+                    Arrays.fill(extractedValues, null);
+                }
+            }
+            rowCount++;
+        }
+
+        /**
+         * Finalizes the shared metadata once and appends every encoded row by buffer range.
+         */
+        void flush() {
+            if (builder == null) {
+                return;
+            }
+            if (rowCount == 0) {
+                builder = null;
+                return;
+            }
+
+            valueOffsets[rowCount] = builder.getWritePos();
+            Variant batch = builder.result();
+            byte[] metadata = batch.metadata();
+            byte[] values = batch.value();
+            for (int row = 0; row < rowCount; row++) {
+                if (nullRows[row]) {
+                    outputColumn.appendNull(ColumnType.Type.VARIANT);
+                } else {
+                    int offset = valueOffsets[row];
+                    outputColumn.appendVariant(
+                            metadata, values, offset, valueOffsets[row + 1] - offset);
+                }
+            }
+            builder = null;
+        }
+
+        int rowCount() {
+            return rowCount;
+        }
+
+        private RowSizeEstimate readExtractedValues(InternalRow extracted) {
+            Arrays.fill(extractedValues, null);
+            long valueBytesUpperBound = projectionValueOverhead;
+            long metadataBytes = 0;
+            for (int fieldIndex = 0; fieldIndex < extractedValues.length; fieldIndex++) {
+                if (!hasExtractedVariant(extracted, fieldIndex)) {
+                    continue;
+                }
+                InternalRow variant = extracted.getRow(fieldIndex, VARIANT_FIELD_COUNT);
+                byte[] value = variant.getBinary(VARIANT_VALUE_INDEX);
+                byte[] metadata = variant.getBinary(VARIANT_METADATA_INDEX);
+                extractedValues[fieldIndex] = new GenericVariant(value, metadata);
+                valueBytesUpperBound += 4L * value.length;
+                metadataBytes += metadata.length;
+            }
+            return new RowSizeEstimate(valueBytesUpperBound, metadataBytes);
+        }
+
+        private boolean shouldFlushBefore(RowSizeEstimate estimate) {
+            if (rowCount == 0) {
+                return false;
+            }
+            return builder.getWritePos() + estimate.valueBytesUpperBound
+                            > GenericVariantUtil.SIZE_LIMIT
+                    || metadataInputBytes + estimate.metadataBytes
+                            > GenericVariantUtil.SIZE_LIMIT / 4L;
+        }
+
+        private void appendObject(PathNode node) {
+            int start = builder.getWritePos();
+            ArrayList<GenericVariantBuilder.FieldEntry> fields = fieldEntries.get(node.objectIndex);
+            fields.clear();
+            for (Map.Entry<String, PathNode> entry : node.children.entrySet()) {
+                PathNode child = entry.getValue();
+                if (!hasValue(child)) {
+                    continue;
+                }
+                String key = entry.getKey();
+                int dictionaryId = builder.addKey(key);
+                fields.add(new GenericVariantBuilder.FieldEntry(
+                        key, dictionaryId, builder.getWritePos() - start));
+                if (child.fieldIndex >= 0) {
+                    builder.appendVariant(extractedValues[child.fieldIndex]);
+                } else {
+                    appendObject(child);
+                }
+            }
+            builder.finishWritingObject(start, fields);
+        }
+
+        private void ensureRowCapacity(int requiredCapacity) {
+            if (requiredCapacity <= nullRows.length) {
+                return;
+            }
+            int newCapacity = Math.max(requiredCapacity, nullRows.length * 2);
+            valueOffsets = Arrays.copyOf(valueOffsets, newCapacity + 1);
+            nullRows = Arrays.copyOf(nullRows, newCapacity);
+        }
+
+        private boolean hasValue(PathNode node) {
+            if (node.fieldIndex >= 0) {
+                return extractedValues[node.fieldIndex] != null;
+            }
+            for (PathNode child : node.children.values()) {
+                if (hasValue(child)) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     private static boolean hasExtractedVariant(InternalRow extracted, int fieldIndex) {
-        // Paimon 1.4.2's RowToColumnConverter writes a Variant's value and metadata children but
-        // does not advance the enclosing HeapRowVector. Its null bitmap can therefore be shifted
-        // when a batch mixes present and missing paths. The two binary children remain aligned,
-        // so use them as the source of truth instead of extracted.isNullAt(fieldIndex).
+        // Paimon 1.4.2 does not reliably advance the enclosing Variant row vector for non-null
+        // values. Its value and metadata children remain aligned and are the source of truth.
         InternalRow variant = extracted.getRow(fieldIndex, VARIANT_FIELD_COUNT);
         boolean valueIsNull = variant.isNullAt(VARIANT_VALUE_INDEX);
         boolean metadataIsNull = variant.isNullAt(VARIANT_METADATA_INDEX);
@@ -166,50 +306,21 @@ final class PaimonVariantProjection {
         return !valueIsNull;
     }
 
-    /** Reads the aligned value and metadata children as one Paimon Variant. */
-    private static Variant getExtractedVariant(InternalRow extracted, int fieldIndex) {
-        InternalRow variant = extracted.getRow(fieldIndex, VARIANT_FIELD_COUNT);
-        return new GenericVariant(
-                variant.getBinary(VARIANT_VALUE_INDEX),
-                variant.getBinary(VARIANT_METADATA_INDEX));
-    }
+    private static final class RowSizeEstimate {
+        private final long valueBytesUpperBound;
+        private final long metadataBytes;
 
-    /**
-     * Writes one object node recursively, omitting missing paths while preserving present JSON
-     * null values. Child insertion order follows the requested access-path order.
-     */
-    private static void appendObject(
-            GenericVariantBuilder builder, PathNode node, InternalRow extracted) {
-        int start = builder.getWritePos();
-        ArrayList<GenericVariantBuilder.FieldEntry> fields = new ArrayList<>();
-        for (Map.Entry<String, PathNode> entry : node.children.entrySet()) {
-            PathNode child = entry.getValue();
-            if (!hasValue(child, extracted)) {
-                continue;
-            }
-            String key = entry.getKey();
-            int dictionaryId = builder.addKey(key);
-            fields.add(new GenericVariantBuilder.FieldEntry(
-                    key, dictionaryId, builder.getWritePos() - start));
-            if (child.fieldIndex >= 0) {
-                Variant value = getExtractedVariant(extracted, child.fieldIndex);
-                builder.appendVariant(new GenericVariant(value.value(), value.metadata()));
-            } else {
-                appendObject(builder, child, extracted);
-            }
+        private RowSizeEstimate(long valueBytesUpperBound, long metadataBytes) {
+            this.valueBytesUpperBound = valueBytesUpperBound;
+            this.metadataBytes = metadataBytes;
         }
-        builder.finishWritingObject(start, fields);
     }
 
     private static final class PathNode {
         private final Map<String, PathNode> children = new LinkedHashMap<>();
         private int fieldIndex = -1;
+        private int objectIndex;
 
-        /**
-         * Adds one leaf path and records its position in Paimon's extracted Row.
-         * Parent/child overlaps and duplicate paths are rejected because one node cannot safely be
-         * materialized as both a leaf Variant and an object containing descendants.
-         */
         private boolean add(List<String> path, int index) {
             PathNode node = this;
             for (String segment : path) {
@@ -223,6 +334,27 @@ final class PaimonVariantProjection {
             }
             node.fieldIndex = index;
             return true;
+        }
+
+        private int assignObjectIndexes(int nextIndex) {
+            objectIndex = nextIndex++;
+            for (PathNode child : children.values()) {
+                if (child.fieldIndex < 0) {
+                    nextIndex = child.assignObjectIndexes(nextIndex);
+                }
+            }
+            return nextIndex;
+        }
+
+        private long valueOverheadUpperBound() {
+            // With four-byte ids and offsets, an object header is at most 9 + 8 * fields bytes.
+            long size = 9L + 8L * children.size();
+            for (PathNode child : children.values()) {
+                if (child.fieldIndex < 0) {
+                    size += child.valueOverheadUpperBound();
+                }
+            }
+            return size;
         }
     }
 }

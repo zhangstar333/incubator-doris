@@ -1550,6 +1550,13 @@ public class VectorColumn {
         return appendIndex++;
     }
 
+    /** Appends one encoded Variant from a reusable value buffer. */
+    public int appendVariant(byte[] metadata, byte[] value, int valueOffset, int valueLength) {
+        reserve(appendIndex + 1);
+        variantColumn.append(metadata, value, valueOffset, valueLength);
+        return appendIndex++;
+    }
+
     private int appendVariantNull() {
         variantColumn.appendNull();
         return appendIndex++;

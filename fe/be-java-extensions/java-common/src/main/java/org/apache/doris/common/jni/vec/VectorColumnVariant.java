@@ -36,6 +36,8 @@ final class VectorColumnVariant {
     private static final byte[] NULL_VALUE = new byte[] {0};
 
     private final Map<ByteArrayKey, Integer> metadataIds = new HashMap<>();
+    private byte[] lastMetadata;
+    private int lastMetadataId;
 
     private long metadataOffsets;
     private long metadataBytes;
@@ -75,19 +77,35 @@ final class VectorColumnVariant {
     }
 
     void append(byte[] metadata, byte[] value) {
+        append(metadata, value, 0, value.length);
+    }
+
+    void append(byte[] metadata, byte[] value, int valueOffset, int valueLength) {
         Objects.requireNonNull(metadata, "Variant metadata cannot be null");
         Objects.requireNonNull(value, "Variant value cannot be null");
+        if (valueOffset < 0 || valueLength < 0 || valueOffset > value.length - valueLength) {
+            throw new IndexOutOfBoundsException(
+                    "Invalid Variant value range: offset=" + valueOffset
+                            + ", length=" + valueLength + ", capacity=" + value.length);
+        }
         reserveRows(rowCount + 1);
 
-        Integer metadataId = metadataIds.get(new ByteArrayKey(metadata));
+        Integer metadataId = metadata == lastMetadata ? lastMetadataId : null;
+        if (metadataId == null) {
+            metadataId = metadataIds.get(new ByteArrayKey(metadata));
+        }
         if (metadataId == null) {
             metadataId = appendMetadata(metadata);
         }
+        lastMetadata = metadata;
+        lastMetadataId = metadataId;
         OffHeap.putInt(null, rowMetadataIds + (long) rowCount * Integer.BYTES, metadataId);
 
-        int requiredValueBytes = checkedSize("value", valueBytesSize, value.length);
+        int requiredValueBytes = checkedSize("value", valueBytesSize, valueLength);
         reserveValueBytes(requiredValueBytes);
-        OffHeap.copyMemory(value, OffHeap.BYTE_ARRAY_OFFSET, null, valueBytes + valueBytesSize, value.length);
+        OffHeap.copyMemory(
+                value, OffHeap.BYTE_ARRAY_OFFSET + valueOffset,
+                null, valueBytes + valueBytesSize, valueLength);
         valueBytesSize = requiredValueBytes;
         rowCount++;
         OffHeap.putInt(null, valueOffsets + (long) rowCount * Integer.BYTES, valueBytesSize);
@@ -108,6 +126,8 @@ final class VectorColumnVariant {
 
     void reset() {
         metadataIds.clear();
+        lastMetadata = null;
+        lastMetadataId = 0;
         metadataCount = 0;
         metadataBytesSize = 0;
         rowCount = 0;

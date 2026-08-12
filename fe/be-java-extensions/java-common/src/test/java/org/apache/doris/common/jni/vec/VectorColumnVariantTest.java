@@ -105,6 +105,27 @@ public class VectorColumnVariantTest {
     }
 
     @Test
+    public void testAppendVariantFromReusableBufferRange() {
+        ColumnType variantType = ColumnType.parseType("v", "variant");
+        VectorTable table = VectorTable.createWritableTable(
+                new ColumnType[] {variantType}, new String[] {"v"}, 1);
+        try {
+            byte[] reusableBuffer = new byte[] {99, 4, 8, 99};
+            table.getColumn(0).appendVariant(EMPTY_METADATA, reusableBuffer, 1, 2);
+
+            long meta = table.getMetaAddress();
+            long valueOffsets = OffHeap.getLong(null, meta + 48);
+            long valueBytes = OffHeap.getLong(null, meta + 56);
+            Assert.assertArrayEquals(new int[] {0, 2},
+                    OffHeap.getInt(null, valueOffsets, 2));
+            Assert.assertArrayEquals(new byte[] {4, 8},
+                    OffHeap.getByte(null, valueBytes, 2));
+        } finally {
+            table.close();
+        }
+    }
+
+    @Test
     public void testResetRebuildsMetadataDictionary() {
         ColumnType variantType = ColumnType.parseType("v", "variant");
         VectorTable table = VectorTable.createWritableTable(
