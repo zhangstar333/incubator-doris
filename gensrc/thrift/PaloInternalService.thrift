@@ -537,6 +537,11 @@ struct TQueryOptions {
   236: optional bool supports_external_file_report_ack = false;
   // Memory limit for one non-streaming analytic partition before it proactively spills.
   237: optional i64 spill_analytic_sink_mem_limit_bytes = 67108864;
+
+  // Reserved for Paimon BLOB support. Keep this id aligned with branch-4.1.
+  // Maximum payload bytes per Paimon BLOB materialized as FILE inline. Descriptors are exempt.
+  238: optional i64 paimon_blob_max_size = 10485760;
+
   // For cloud, to control if the content would be written into file cache
   // In write path, to control if the content would be written into file cache.
   // In read path, read from file cache or remote storage when execute query.
