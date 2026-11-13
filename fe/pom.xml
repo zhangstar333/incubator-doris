@@ -174,7 +174,9 @@ under the License.
                             <!-- be-java-extensions/hadoop-deps' verbatim copy of
                                  org.apache.hadoop.fs.FileSystem. Scoped to fs/ so that
                                  fe-connector-hms' org/apache/hadoop/hive/** stays checked. -->
-                            **/apache/hadoop/fs/**/*
+                            **/apache/hadoop/fs/**/*,
+                            <!-- Verbatim upstream UGI with marked DORIS-PATCH renewal hunks. -->
+                            **/apache/hadoop/security/UserGroupInformation.java
                         </excludes>
                     </configuration>
                     <executions>

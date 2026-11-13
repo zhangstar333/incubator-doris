@@ -40,8 +40,9 @@ under the License.
         - The DEPLOYMENT is invisible to every plugin. A plugin that reads through hadoop carries
           its own copy of hadoop-common and its own filesystem implementations; nothing in
           lib/hadoop_hdfs reaches it. The module JAR is a different matter: it holds nothing but
-          the Doris-patched org.apache.hadoop.fs.FileSystem (the credential-aware cache key, see
-          the class header), and every plugin that bundles hadoop-common declares this artifact
+          the Doris-patched org.apache.hadoop.fs.FileSystem (the credential-aware cache key) and
+          org.apache.hadoop.security.UserGroupInformation (recoverable keytab renewal), and every
+          plugin that bundles hadoop-common declares this artifact
           so that copy lands in its plugin directory too - ahead of hadoop-common's, which is
           what the Doris-Shadows-Classes manifest attribute below arranges.
         - Which schemes actually arrive here is decided in FE. StorageRegistry maps s3a/s3n/cosn/
@@ -163,10 +164,10 @@ under the License.
                                     <property>hadoop.version</property>
                                     <regex>3\.4\.2</regex>
                                     <regexMessage>
-                                        hadoop-deps ships a patched copy of org.apache.hadoop.fs.FileSystem
-                                        (src/main/java/org/apache/hadoop/fs/FileSystem.java) taken verbatim from
+                                        hadoop-deps ships patched copies of org.apache.hadoop.fs.FileSystem and
+                                        org.apache.hadoop.security.UserGroupInformation taken verbatim from
                                         hadoop-common 3.4.2 sources. Before upgrading hadoop.version, re-copy
-                                        FileSystem.java from the new hadoop-common sources jar and re-apply the
+                                        both classes from the new hadoop-common sources jar and re-apply the
                                         DORIS-PATCH hunks (grep for DORIS-PATCH), then update this enforcer regex.
                                     </regexMessage>
                                 </requireProperty>
@@ -192,7 +193,7 @@ under the License.
                               lets only them duplicate another jar's. Merged with the parent's
                               Doris-Jni-Plugin-Api-Version entry, not replacing it.
                             -->
-                            <Doris-Shadows-Classes>org.apache.hadoop.fs.FileSystem</Doris-Shadows-Classes>
+                            <Doris-Shadows-Classes>org.apache.hadoop.fs.FileSystem,org.apache.hadoop.security.UserGroupInformation</Doris-Shadows-Classes>
                         </manifestEntries>
                     </archive>
                 </configuration>
