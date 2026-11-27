@@ -17,10 +17,15 @@
 
 package org.apache.doris.paimon;
 
+import org.apache.doris.jni.spi.utils.OffHeap;
 import org.apache.doris.jni.spi.vec.ColumnType;
 import org.apache.doris.jni.spi.vec.ColumnValue;
+import org.apache.doris.jni.spi.vec.FileValue;
+import org.apache.doris.jni.spi.vec.VectorTable;
 
 import org.apache.paimon.data.BinaryString;
+import org.apache.paimon.data.Blob;
+import org.apache.paimon.data.BlobDescriptor;
 import org.apache.paimon.data.DataGetters;
 import org.apache.paimon.data.Decimal;
 import org.apache.paimon.data.GenericArray;
@@ -32,6 +37,7 @@ import org.apache.paimon.data.serializer.InternalRowSerializer;
 import org.apache.paimon.data.variant.GenericVariant;
 import org.apache.paimon.types.ArrayType;
 import org.apache.paimon.types.BigIntType;
+import org.apache.paimon.types.BlobType;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DecimalType;
 import org.apache.paimon.types.IntType;
@@ -47,6 +53,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -62,6 +69,96 @@ public class PaimonColumnValueTest {
             new String[] {"a", "b", "c"});
     private final ColumnType dorisStructType =
             ColumnType.parseType("s", "struct<a:int,b:string,c:bigint>");
+
+    @Test
+    public void testInlineFileContainsOnlyPayload() {
+        byte[] payload = "hello world".getBytes(StandardCharsets.UTF_8);
+        PaimonColumnValue value = createBlobValue(Blob.fromData(payload));
+        FileValue file = value.getFile();
+        Assertions.assertArrayEquals(payload, file.getInline());
+        Assertions.assertNull(file.getUri());
+        Assertions.assertNull(file.getOffset());
+        Assertions.assertNull(file.getSize());
+        Assertions.assertNull(file.getContentType());
+        Assertions.assertNull(file.getChecksum());
+        Assertions.assertTrue(PaimonTypeUtils.fromPaimonType("image", new BlobType()).isFile());
+    }
+
+    @Test
+    public void testDescriptorDoesNotReadPayloadOrApplyInlineLimit() {
+        for (long length : new long[] {11, -1}) {
+            PaimonColumnValue value = createBlobValue(descriptorBlob(length));
+            value.setBlobAsDescriptor(true);
+            value.setBlobMaxSize(1);
+            FileValue file = value.getFile();
+            Assertions.assertEquals("file:/a.blob", file.getUri());
+            Assertions.assertEquals(Long.valueOf(17), file.getOffset());
+            Assertions.assertEquals(length < 0 ? null : Long.valueOf(length), file.getSize());
+            Assertions.assertNull(file.getInline());
+        }
+    }
+
+    @Test
+    public void testInlineSizeLimitAndEmptyPayload() {
+        PaimonColumnValue value = createBlobValue(Blob.fromData(new byte[] {1, 2}));
+        value.setBlobMaxSize(2);
+        Assertions.assertArrayEquals(new byte[] {1, 2}, value.getFile().getInline());
+        value.setBlobMaxSize(1);
+        Assertions.assertThrows(IllegalArgumentException.class, value::getFile);
+        value.setOffsetRow(GenericRow.of(Blob.fromData(new byte[0])));
+        Assertions.assertArrayEquals(new byte[0], value.getFile().getInline());
+        value.setOffsetRow(GenericRow.of((Object) null));
+        Assertions.assertTrue(value.isNull());
+    }
+
+    @Test
+    public void testKnownLengthLimitCheckedBeforeReading() {
+        PaimonColumnValue value = createBlobValue(descriptorBlob(11));
+        value.setBlobMaxSize(10);
+        Assertions.assertThrows(IllegalArgumentException.class, value::getFile);
+    }
+
+    @Test
+    public void testNestedFileUsesFileGetter() {
+        RowType rowType = RowType.of(new DataType[] {new BlobType()}, new String[] {"image"});
+        PaimonColumnValue value = new PaimonColumnValue(
+                GenericRow.of(GenericRow.of(Blob.fromData(new byte[] {42}))), 0,
+                ColumnType.parseType("s", "struct<image:file>"), rowType, "UTC");
+        List<ColumnValue> children = new ArrayList<>();
+        value.unpackStruct(Collections.singletonList(0), children);
+        Assertions.assertArrayEquals(new byte[] {42}, children.get(0).getFile().getInline());
+    }
+
+    @Test
+    public void testAppendBlobThroughFileColumnValue() {
+        OffHeap.setTesting();
+        VectorTable table = VectorTable.createWritableTable(
+                new ColumnType[] {ColumnType.parseType("image", "file")}, new String[] {"image"}, 1);
+        try {
+            byte[] payload = new byte[] {0, 42, (byte) 255};
+            PaimonColumnValue value = createBlobValue(Blob.fromData(payload));
+            table.appendData(0, value);
+            value.setOffsetRow(GenericRow.of(descriptorBlob(11)));
+            value.setBlobAsDescriptor(true);
+            table.appendData(0, value);
+            Assertions.assertArrayEquals(payload, table.getColumn(0).getFile(0).getInline());
+            Assertions.assertEquals("file:/a.blob", table.getColumn(0).getFile(1).getUri());
+            Assertions.assertNull(table.getColumn(0).getFile(1).getInline());
+        } finally {
+            table.close();
+        }
+    }
+
+    private PaimonColumnValue createBlobValue(Blob blob) {
+        return new PaimonColumnValue(GenericRow.of(blob), 0,
+                ColumnType.parseType("image", "file"), new BlobType(), "UTC");
+    }
+
+    private Blob descriptorBlob(long length) {
+        return Blob.fromDescriptor(uri -> {
+            throw new AssertionError("Payload must not be read");
+        }, new BlobDescriptor("file:/a.blob", 17, length));
+    }
 
     @Test
     public void testUnpackNonLeadingStructField() {

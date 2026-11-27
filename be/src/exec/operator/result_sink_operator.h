@@ -147,6 +147,7 @@ public:
     Status init(RuntimeState* state, LocalSinkStateInfo& info) override;
     Status open(RuntimeState* state) override;
     Status close(RuntimeState* state, Status exec_status) override;
+    bool is_blockable() const override;
 
 private:
     friend class ResultSinkOperatorX;

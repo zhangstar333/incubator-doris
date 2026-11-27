@@ -44,6 +44,7 @@ public class PaimonReaderOptionsTest {
     @Test
     void testSupportsSafeBatchReadOptions() {
         Assertions.assertEquals(ImmutableSet.of(
+                        CoreOptions.BLOB_AS_DESCRIPTOR.key(),
                         CoreOptions.READ_BATCH_SIZE.key(),
                         CoreOptions.FILE_READER_ASYNC_THRESHOLD.key(),
                         CoreOptions.FILE_INDEX_READ_ENABLED.key(),
@@ -62,8 +63,20 @@ public class PaimonReaderOptionsTest {
     }
 
     @Test
+    void testSupportsBlobAsDescriptorOption() {
+        for (String value : new String[] {"true", "false"}) {
+            Assertions.assertDoesNotThrow(() -> PaimonReaderOptions.validateCatalogProperties(
+                    ImmutableMap.of(PaimonReaderOptions.TABLE_OPTION_PREFIX
+                            + CoreOptions.BLOB_AS_DESCRIPTOR.key(), value)));
+            Assertions.assertDoesNotThrow(() -> PaimonReaderOptions.validateEffectiveTableOptions(
+                    ImmutableMap.of(CoreOptions.BLOB_AS_DESCRIPTOR.key(), value)));
+        }
+    }
+
+    @Test
     void testRejectsInvalidSafeBatchReadOptions() {
         for (Map<String, String> options : new Map[] {
+                ImmutableMap.of(CoreOptions.BLOB_AS_DESCRIPTOR.key(), "not-a-boolean"),
                 ImmutableMap.of("file-index.read.enabled", "not-a-boolean"),
                 ImmutableMap.of("source.split.target-size", "0 B"),
                 ImmutableMap.of("source.split.open-file-cost", "-1 B"),
@@ -77,6 +90,8 @@ public class PaimonReaderOptionsTest {
     @Test
     void testRejectUnsafeOptionsFromCreateOrAlterProperties() {
         for (Map<String, String> properties : new Map[] {
+                ImmutableMap.of(PaimonReaderOptions.TABLE_OPTION_PREFIX
+                        + CoreOptions.BLOB_AS_DESCRIPTOR.key(), "not-a-boolean"),
                 ImmutableMap.of(PaimonReaderOptions.TABLE_OPTION_PREFIX + "branch", "archive"),
                 ImmutableMap.of(PaimonReaderOptions.TABLE_OPTION_PREFIX + "read.batch-size", "0"),
                 ImmutableMap.of(PaimonReaderOptions.TABLE_OPTION_PREFIX

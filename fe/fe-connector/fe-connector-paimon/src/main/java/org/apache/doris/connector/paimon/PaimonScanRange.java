@@ -20,6 +20,7 @@ package org.apache.doris.connector.paimon;
 import org.apache.doris.connector.spi.scan.ConnectorScanRange;
 import org.apache.doris.thrift.TFileFormatType;
 import org.apache.doris.thrift.TFileRangeDesc;
+import org.apache.doris.thrift.TPaimonBlobFileDesc;
 import org.apache.doris.thrift.TPaimonDeletionFileDesc;
 import org.apache.doris.thrift.TPaimonFileDesc;
 import org.apache.doris.thrift.TPaimonReaderType;
@@ -63,6 +64,10 @@ public class PaimonScanRange implements ConnectorScanRange {
     // FileSplit proportional weight. -1 = not provided (SPI sentinel). Separate from the file-splitting
     // granularity used to slice native files.
     private final long targetSplitSize;
+    private final List<TPaimonBlobFileDesc> blobFiles;
+    private final long anchorFirstRowId;
+    private final long anchorRowCount;
+    private final List<Integer> blobDescriptorFieldIds;
 
     private PaimonScanRange(Builder builder) {
         this.path = builder.path;
@@ -72,6 +77,11 @@ public class PaimonScanRange implements ConnectorScanRange {
         this.fileFormat = builder.fileFormat;
         this.selfSplitWeight = builder.selfSplitWeight;
         this.targetSplitSize = builder.targetSplitSize;
+        this.blobFiles = builder.blobFiles == null ? null
+                : Collections.unmodifiableList(new ArrayList<>(builder.blobFiles));
+        this.anchorFirstRowId = builder.anchorFirstRowId;
+        this.anchorRowCount = builder.anchorRowCount;
+        this.blobDescriptorFieldIds = Collections.unmodifiableList(new ArrayList<>(builder.blobDescriptorFieldIds));
         this.partitionValues = builder.partitionValues != null
                 ? Collections.unmodifiableMap(builder.partitionValues)
                 : Collections.emptyMap();
@@ -274,6 +284,14 @@ public class PaimonScanRange implements ConnectorScanRange {
             }
         }
 
+        if (blobFiles != null) {
+            fileDesc.setBlobFiles(blobFiles);
+            fileDesc.setAnchorFirstRowId(anchorFirstRowId);
+            fileDesc.setAnchorRowCount(anchorRowCount);
+        }
+        if (!blobDescriptorFieldIds.isEmpty()) {
+            fileDesc.setBlobDescriptorFieldIds(blobDescriptorFieldIds);
+        }
         fileDesc.setFileFormat(getFileFormat());
 
         // Deletion file
@@ -351,6 +369,10 @@ public class PaimonScanRange implements ConnectorScanRange {
         private String branchName;
 
         // Native reader fields
+        private List<TPaimonBlobFileDesc> blobFiles;
+        private long anchorFirstRowId;
+        private long anchorRowCount;
+        private List<Integer> blobDescriptorFieldIds = Collections.emptyList();
         private Long schemaId;
         private String originalFilePath;
         private String deletionFilePath;
@@ -417,6 +439,18 @@ public class PaimonScanRange implements ConnectorScanRange {
             this.tableName = tableName;
             this.tableSchemaJson = tableSchemaJson;
             this.branchName = branchName;
+            return this;
+        }
+
+        public Builder blobFiles(List<TPaimonBlobFileDesc> files, long firstRowId, long rowCount) {
+            this.blobFiles = files;
+            this.anchorFirstRowId = firstRowId;
+            this.anchorRowCount = rowCount;
+            return this;
+        }
+
+        public Builder blobDescriptorFieldIds(List<Integer> ids) {
+            this.blobDescriptorFieldIds = ids;
             return this;
         }
 

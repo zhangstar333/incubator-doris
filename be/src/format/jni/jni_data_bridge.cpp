@@ -24,6 +24,7 @@
 
 #include "core/block/block.h"
 #include "core/column/column_array.h"
+#include "core/column/column_file.h"
 #include "core/column/column_map.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
@@ -31,6 +32,7 @@
 #include "core/column/column_varbinary.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_array.h"
+#include "core/data_type/data_type_file.h"
 #include "core/data_type/data_type_map.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_struct.h"
@@ -177,6 +179,19 @@ Status JniDataBridge::fill_column(TableMetaAddress& address, ColumnPtr& doris_co
     case PrimitiveType::TYPE_STRUCT:
         status = _fill_struct_column(address, data_column, data_type, num_rows);
         break;
+    case PrimitiveType::TYPE_FILE: {
+        auto& file = assert_cast<ColumnFile&>(*data_column);
+        const auto& file_type = assert_cast<const DataTypeFile&>(*remove_nullable(data_type));
+        for (size_t i = 0; i < DataTypeFile::FIELD_COUNT && status.ok(); ++i) {
+            // Move the typed child into the generic JNI interface, then restore its owner even
+            // on an error. Copying it would force COW to clone all previous rows on every batch.
+            ColumnPtr child = std::move(file.get_column_ptr(i));
+            status = fill_column(address, child, file_type.get_element(i), num_rows);
+            file.get_column_ptr(i) =
+                    ColumnNullable::cast_to_column_ptr(&assert_cast<const ColumnNullable&>(*child));
+        }
+        break;
+    }
     case PrimitiveType::TYPE_VARBINARY:
         status = _fill_varbinary_column(address, data_column, num_rows);
         break;
@@ -327,6 +342,8 @@ std::string JniDataBridge::get_jni_type(const DataTypePtr& data_type) {
     DataTypePtr type = remove_nullable(data_type);
     std::ostringstream buffer;
     switch (type->get_primitive_type()) {
+    case TYPE_FILE:
+        return "file";
     case TYPE_BOOLEAN:
         return "boolean";
     case TYPE_TINYINT:
@@ -437,6 +454,8 @@ std::string JniDataBridge::get_jni_type_with_different_string(const DataTypePtr&
     DataTypePtr type = remove_nullable(data_type);
     std::ostringstream buffer;
     switch (data_type->get_primitive_type()) {
+    case TYPE_FILE:
+        return "file";
     case TYPE_BOOLEAN:
         return "boolean";
     case TYPE_TINYINT:
@@ -573,6 +592,8 @@ std::string JniDataBridge::encode_schema_values(const std::vector<std::string>& 
 
 std::string JniDataBridge::get_jni_type_with_encoded_struct_fields(const DataTypePtr& data_type) {
     switch (data_type->get_primitive_type()) {
+    case TYPE_FILE:
+        return "file";
     case TYPE_STRUCT: {
         const auto* type_struct =
                 assert_cast<const DataTypeStruct*>(remove_nullable(data_type).get());
@@ -669,6 +690,15 @@ Status JniDataBridge::_fill_column_meta(const ColumnPtr& doris_column, const Dat
             const auto& struct_field = doris_struct.get_column_ptr(i);
             const auto& field_type = doris_struct_type->get_element(i);
             RETURN_IF_ERROR(_fill_column_meta(struct_field, field_type, meta_data));
+        }
+        break;
+    }
+    case PrimitiveType::TYPE_FILE: {
+        const auto& file = assert_cast<const ColumnFile&>(*data_column);
+        const auto& file_type = assert_cast<const DataTypeFile&>(*remove_nullable(data_type));
+        for (size_t i = 0; i < DataTypeFile::FIELD_COUNT; ++i) {
+            RETURN_IF_ERROR(
+                    _fill_column_meta(file.get_column_ptr(i), file_type.get_element(i), meta_data));
         }
         break;
     }

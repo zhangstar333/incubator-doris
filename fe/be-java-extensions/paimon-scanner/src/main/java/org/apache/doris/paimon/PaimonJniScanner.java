@@ -29,6 +29,7 @@ import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.disk.IOManager;
 import org.apache.paimon.disk.IOManagerImpl;
 import org.apache.paimon.options.MemorySize;
+import org.apache.paimon.options.Options;
 import org.apache.paimon.predicate.Predicate;
 import org.apache.paimon.predicate.PredicateBuilder;
 import org.apache.paimon.predicate.PredicateVisitor;
@@ -51,6 +52,7 @@ import org.apache.paimon.table.system.ReadOptimizedTable;
 import org.apache.paimon.table.system.RowTrackingTable;
 import org.apache.paimon.table.system.SystemTableLoader;
 import org.apache.paimon.types.ArrayType;
+import org.apache.paimon.types.BlobType;
 import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypeChecks;
@@ -172,6 +174,8 @@ public class PaimonJniScanner extends JniScanner {
                 "Missing required Paimon scanner parameter: serialized_table_cache_key");
         timeZone = params.getOrDefault("time_zone", TimeZone.getDefault().getID());
         columnValue.setTimeZone(timeZone);
+        columnValue.setBlobMaxSize(Long.parseLong(params.getOrDefault("paimon_blob_max_size",
+                Long.toString(PaimonColumnValue.DEFAULT_BLOB_MAX_SIZE))));
         variantAccessPathsByColumn = variantAccessPathsByColumn(params, requiredFields.length);
         initTableInfo(columnTypes, requiredFields, batchSize);
         hadoopOptionParams = params.entrySet().stream()
@@ -211,6 +215,8 @@ public class PaimonJniScanner extends JniScanner {
     }
 
     private void initReader() throws IOException {
+        // Read the effective option on cache hits and relation overrides as well.
+        columnValue.setBlobAsDescriptor(new Options(table.options()).get(CoreOptions.BLOB_AS_DESCRIPTOR));
         Split split = getSplit();
         QueryAuthSplit authSplit = PaimonTimestampQueryAuth.findAuthSplit(split);
         Table dataSource = dataSource(table);
@@ -223,7 +229,6 @@ public class PaimonJniScanner extends JniScanner {
                                 .collect(Collectors.toList()))) {
             requiresDatetimeV2PrecisionRepair = true;
         }
-        ReadBuilder readBuilder = table.newReadBuilder();
         if (Arrays.stream(fields).filter(field -> !isFileMetadataField(field)).count() > paimonAllFieldNames.size()) {
             throw new IOException(
                     String.format(
@@ -294,6 +299,18 @@ public class PaimonJniScanner extends JniScanner {
             split = PaimonTimestampQueryAuth.repairPolicy(split, new RowType(currentFields));
             hasReadTypeProjection = true;
         }
+        Table readTable = table;
+        if (readFields.stream().anyMatch(field -> field.type() instanceof BlobType)) {
+            // The SDK otherwise allocates each managed BLOB before returning its row. Request
+            // references so PaimonColumnValue can enforce the size limit before reading inline.
+            // Keep this copy scanner-local: cached table options still describe the output mode.
+            Map<String, String> blobReadOptions = Collections.singletonMap(
+                    CoreOptions.BLOB_AS_DESCRIPTOR.key(), "true");
+            readTable = table instanceof FileStoreTable
+                    ? ((FileStoreTable) table).copyWithoutTimeTravel(blobReadOptions)
+                    : table.copy(blobReadOptions);
+        }
+        ReadBuilder readBuilder = readTable.newReadBuilder();
         if (hasReadTypeProjection) {
             readBuilder.withReadType(new RowType(readFields));
         } else {

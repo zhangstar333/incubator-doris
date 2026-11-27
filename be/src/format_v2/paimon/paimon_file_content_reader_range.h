@@ -1,0 +1,51 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+#pragma once
+
+#include <map>
+#include <string>
+
+#include "core/pod_array.h"
+#include "format_v2/paimon/paimon_blob_read_context.h"
+#include "io/fs/file_reader.h"
+
+namespace doris::format::paimon {
+
+struct PaimonBlobLocation;
+
+enum class PaimonBlobReadMode { RAW_RANGE, APPEND_RECORD };
+
+// Shared storage I/O for scan columns and FILE content consumption. Owns handles until reset()
+// or destruction; delegates Append framing and CRC validation to PaimonAppendBlobFileReader.
+class PaimonFileContentRangeReader {
+public:
+    ~PaimonFileContentRangeReader() { reset(); }
+
+    static Result<io::FileReaderSPtr> open_file(const std::string& path, int64_t file_size,
+                                                const PaimonBlobReadContext& read_context);
+    Status read_range(const PaimonBlobLocation& blob_location,
+                      const PaimonBlobReadContext& read_context, PODArray<char>* payload_buffer,
+                      PaimonBlobReadMode read_mode = PaimonBlobReadMode::RAW_RANGE);
+    void reset();
+
+private:
+    static constexpr size_t MAX_OPEN_FILES = 64;
+    std::map<std::string, io::FileReaderSPtr, std::less<>> _file_readers;
+};
+
+} // namespace doris::format::paimon

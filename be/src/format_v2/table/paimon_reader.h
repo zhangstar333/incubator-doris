@@ -18,6 +18,8 @@
 #pragma once
 
 #include <functional>
+#include <memory>
+#include <optional>
 #include <utility>
 
 #include "format_v2/table_reader.h"
@@ -27,11 +29,17 @@ struct DeleteFileDesc;
 }
 namespace doris::format::paimon {
 
+class PaimonBlobScan;
+
 class PaimonReader final : public format::TableReader {
 public:
     ENABLE_FACTORY_CREATOR(PaimonReader);
-    ~PaimonReader() final = default;
+    PaimonReader();
+    ~PaimonReader() final;
+    Status init(format::TableReadOptions&& options) override;
     Status prepare_split(const format::SplitReadOptions& options) override;
+    Status abort_split() override;
+    Status close() override;
 
 #ifdef BE_TEST
     void TEST_set_scan_params(TFileScanRangeParams* params) { _scan_params = params; }
@@ -53,13 +61,10 @@ public:
 #endif
 
 protected:
-    void configure_mapper_options(format::TableColumnMapperOptions* options) const override {
-        options->enable_paimon_metadata_virtual_columns = true;
-        options->truncate_datetimev2_precision_for_paimon = true;
-    }
     format::TableColumnMappingMode mapping_mode() const override;
     Status annotate_file_schema(std::vector<format::ColumnDefinition>* file_schema) override;
     Status customize_file_scan_request(format::FileScanRequest* file_request) override;
+    void configure_mapper_options(format::TableColumnMapperOptions* options) const override;
     Status materialize_virtual_columns(Block* table_block) override;
 
     Status _parse_deletion_vector_file(const TTableFormatFileDesc& t_desc, DeleteFileDesc* desc,
@@ -76,6 +81,7 @@ private:
     size_t _row_position_block_position = 0;
     std::string _original_file_path;
     std::vector<format::LocalColumnIndex> _variant_schema_overrides;
+    std::unique_ptr<PaimonBlobScan> _blob_scan;
 };
 
 // Paimon scans can contain both native data-file splits and serialized JNI splits in the same

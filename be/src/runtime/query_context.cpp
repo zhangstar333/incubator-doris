@@ -24,6 +24,7 @@
 #include <glog/logging.h>
 
 #include <algorithm>
+#include <cctype>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -42,6 +43,7 @@
 #include "io/cache/remote_scan_cache_write_limiter.h"
 #include "io/fs/file_range_read_scheduler.h"
 #include "runtime/exec_env.h"
+#include "runtime/file_content_reader.h"
 #include "runtime/fragment_mgr.h"
 #include "runtime/memory/heap_profiler.h"
 #include "runtime/runtime_query_statistics_mgr.h"
@@ -234,6 +236,13 @@ void QueryContext::record_spill_data_dir(SpillDataDir* data_dir) {
     _spill_data_dirs.emplace(data_dir);
 }
 
+Status QueryContext::init_file_read_resources(
+        std::map<int32_t, TFileReadResource> resources_by_source_id) {
+    RETURN_IF_ERROR(FileContentReader::validate_resources(resources_by_source_id));
+    _file_read_resources = std::move(resources_by_source_id);
+    return Status::OK();
+}
+
 QueryContext::~QueryContext() {
     SCOPED_SWITCH_THREAD_MEM_TRACKER_LIMITER(query_mem_tracker());
     {
@@ -242,6 +251,7 @@ QueryContext::~QueryContext() {
             _file_range_read_context->cancel();
         }
     }
+    _file_read_resources.clear();
     // query mem tracker consumption is equal to 0, it means that after QueryContext is created,
     // it is found that query already exists in _query_ctx_map, and query mem tracker is not used.
     // query mem tracker consumption is not equal to 0 after use, because there is memory consumed

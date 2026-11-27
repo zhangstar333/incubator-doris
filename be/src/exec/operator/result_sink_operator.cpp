@@ -35,6 +35,10 @@
 
 namespace doris {
 
+bool ResultSinkLocalState::is_blockable() const {
+    return VExpr::contains_blockable_function(_output_vexpr_ctxs);
+}
+
 Status ResultSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo& info) {
     RETURN_IF_ERROR(Base::init(state, info));
     SCOPED_TIMER(exec_time_counter());

@@ -20,6 +20,7 @@
 #include <glog/logging.h>
 
 #include <algorithm>
+#include <map>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -41,9 +42,11 @@
 #include "format/table/paimon_deletion_vector.h"
 #include "format_v2/column_mapper.h"
 #include "format_v2/jni/paimon_jni_reader.h"
+#include "format_v2/paimon/paimon_blob_scan.h"
 #include "format_v2/table/paimon_rust_table_reader.h"
 #include "format_v2/table/schema_history_util.h"
 #include "gen_cpp/PlanNodes_types.h"
+#include "runtime/runtime_state.h"
 #include "util/string_util.h"
 
 namespace doris::format::paimon {
@@ -190,9 +193,35 @@ Status annotate_paimon_variants(const std::vector<ColumnDefinition>& table_schem
 
 } // namespace
 
+PaimonReader::PaimonReader() : _blob_scan(std::make_unique<PaimonBlobScan>()) {}
+
+PaimonReader::~PaimonReader() = default;
+
+Status PaimonReader::init(format::TableReadOptions&& options) {
+    RETURN_IF_ERROR(TableReader::init(std::move(options)));
+    const std::map<std::string, std::string> empty_options;
+    return _blob_scan->init(_projected_columns,
+                            _scan_params && _scan_params->__isset.paimon_options
+                                    ? _scan_params->paimon_options
+                                    : empty_options,
+                            _scanner_profile);
+}
+
+Status PaimonReader::abort_split() {
+    auto status = TableReader::abort_split();
+    _blob_scan->reset();
+    return status;
+}
+
+Status PaimonReader::close() {
+    auto status = TableReader::close();
+    _blob_scan->reset();
+    return status;
+}
+
 Status PaimonReader::prepare_split(const format::SplitReadOptions& options) {
     {
-        // Derived schema selection is additive to, not nested around, the common base timers.
+        // Add derived preparation time without nesting the base class's counters.
         SCOPED_TIMER(_profile.total_timer);
         SCOPED_TIMER(_profile.prepare_split_timer);
         _split_schema_id = -1;
@@ -204,6 +233,7 @@ Status PaimonReader::prepare_split(const format::SplitReadOptions& options) {
         if (paimon_params.__isset.original_file_path) {
             _original_file_path = paimon_params.original_file_path;
         }
+        RETURN_IF_ERROR(_blob_scan->prepare_split(paimon_params));
     }
     RETURN_IF_ERROR(format::TableReader::prepare_split(options));
     SCOPED_TIMER(_profile.total_timer);
@@ -262,7 +292,21 @@ Status PaimonReader::customize_file_scan_request(format::FileScanRequest* file_r
         RETURN_IF_ERROR(_append_row_position_output_column(file_request));
     }
     file_request->variant_schema_overrides = _variant_schema_overrides;
+    for (const auto row_position_column_id : _blob_scan->additional_row_position_columns()) {
+        _append_file_scan_column(file_request, row_position_column_id,
+                                 &file_request->non_predicate_columns);
+    }
+    if (_blob_scan->has_blob_columns()) {
+        RETURN_IF_ERROR(_blob_scan->prepare_file_inputs(_data_reader.column_mapper->mappings(),
+                                                        *file_request));
+    }
     return Status::OK();
+}
+
+void PaimonReader::configure_mapper_options(format::TableColumnMapperOptions* options) const {
+    options->enable_paimon_metadata_virtual_columns = true;
+    options->truncate_datetimev2_precision_for_paimon = true;
+    _blob_scan->configure_mapper_options(options);
 }
 
 Status PaimonReader::materialize_virtual_columns(Block* table_block) {
@@ -281,7 +325,40 @@ Status PaimonReader::materialize_virtual_columns(Block* table_block) {
             break;
         }
     }
-    return Status::OK();
+    if (table_block->rows() == 0 || !_blob_scan->has_blob_columns()) {
+        return Status::OK();
+    }
+    uint32_t source_id = 0;
+    if (_blob_scan->requires_content_binding() &&
+        _system_properties->system_type != TFileType::FILE_LOCAL) {
+        const auto& split = _current_file_range_desc.table_format_params.paimon_params;
+        std::string key = split.__isset.blob_files ? "paimon-record" : "paimon-range";
+        // Admission belongs to the physical split. Bind a stable resource variant so the consumer
+        // preserves that policy even after the FILE crosses an Exchange or outlives its scanner.
+        if (_current_file_range_desc.__isset.file_cache_admission &&
+            !_current_file_range_desc.file_cache_admission) {
+            key += "-no-cache";
+        }
+        const auto source = _scan_params->file_read_resources.find(key);
+        if (source == _scan_params->file_read_resources.end() || !source->second.__isset.paimon ||
+            !source->second.__isset.source_id || source->second.source_id <= 0) {
+            return Status::InvalidArgument("Paimon FILE source {} is not assigned by FE", key);
+        }
+        source_id = source->second.source_id;
+    }
+    const PaimonBlobScan::ReadContext read_context {
+            .system_properties = *_system_properties,
+            .runtime_state = _runtime_state,
+            .io_ctx = _io_ctx.get(),
+            .profile = _scanner_profile,
+            .fs_name = _current_file_range_desc.fs_name,
+            .file_cache_admission = !_current_file_range_desc.__isset.file_cache_admission ||
+                                    _current_file_range_desc.file_cache_admission,
+            .blob_max_size = _runtime_state != nullptr
+                                     ? _runtime_state->query_options().paimon_blob_max_size
+                                     : TQueryOptions().paimon_blob_max_size,
+            .read_source_id = source_id};
+    return _blob_scan->read_columns(_data_reader.block_template, table_block, read_context);
 }
 
 const std::string& PaimonReader::_data_file_path() const {

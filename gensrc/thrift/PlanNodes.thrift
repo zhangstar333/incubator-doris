@@ -460,6 +460,8 @@ struct TPaimonFileDesc {
     23: optional i64 anchor_row_count
     // Reserved for the per-split Paimon primary-key vector search payload in #69493.
     24: optional TPaimonVectorPayload vector_payload;
+    // Physical BLOB descriptors in primary-key Parquet files, aligned with branch-4.1.
+    25: optional list<i32> blob_descriptor_field_ids;
 }
 
 struct TTrinoConnectorFileDesc {
@@ -655,10 +657,12 @@ union TExternalSearchQuery {
 // A catalog/S3 range reads fragments from a fixed snapshot. A local TVF range uses version zero
 // without fragment_ids to open the latest snapshot and scan the whole dataset on its selected BE.
 struct TLanceFileDesc {
+    // Deprecated: use TLanceScanParams.dataset_uri. Kept for legacy readers and old-FE plans.
     // URI of the Lance dataset (s3://..., file:///..., etc.)
     1: optional string dataset_uri
     // Specific fragment IDs to read (for split-level parallelism)
     2: optional list<i64> fragment_ids
+    // Deprecated: use TLanceScanParams.version. Kept for legacy readers and old-FE plans.
     // Dataset version for time travel
     3: optional i64 version
     // Per-split row limit pushed down from the query LIMIT. Each scanner returns at
@@ -849,6 +853,42 @@ struct TLanceScanParams {
     // with a static option set, so credentials that expire mid-scan are not re-vended. Renewal
     // needs a refresh channel of its own, which this field is not.
     3: optional map<string, string> lance_storage_options
+    // Common dataset identity and fixed snapshot used by query-scoped BLOB resources.
+    4: optional string dataset_uri
+    5: optional i64 version
+}
+
+// Query-local BLOB read configuration, sent to every participating BE.
+struct TLanceBlobResource {
+    1: optional string dataset_uri
+    2: optional i64 version
+    3: optional string column_name
+    4: optional map<string, string> storage_options
+}
+
+enum TPaimonTableType {
+    APPEND = 0,
+    PRIMARY_KEY = 1
+}
+
+// Native Paimon ranges use FileFactory rather than the Lance dataset SDK.
+struct TPaimonFileReadResource {
+    1: optional Types.TFileType file_type
+    2: optional map<string, string> properties
+    3: optional THdfsParams hdfs_params
+    4: optional list<Types.TNetworkAddress> broker_addresses
+    5: optional TPaimonTableType table_type
+    6: optional bool file_cache_admission = true
+}
+
+// A connector declares resources in its scan params; FE assigns query-wide IDs before serialization.
+// Exactly one provider must be set. The public FILE fields carry Paimon ranges, while Lance uses
+// the existing internal row-ID column. Access configuration never travels in FILE values.
+struct TFileReadResource {
+    1: optional i32 source_id
+    2: optional TLanceBlobResource lance
+    3: optional TPaimonFileReadResource paimon
+    // 4: reserved for former experimental materialize_on_output.
 }
 
 struct TFileScanRangeParams {
@@ -949,6 +989,8 @@ struct TFileScanRangeParams {
     // Reserved for the scan-level Paimon vector search request in #69493.
     // The per-split physical payload stays in TPaimonFileDesc.vector_payload.
     42: optional TExternalSearchRequest external_search_request
+    // Provider-owned keys (e.g. a column name); values receive query-wide source IDs from FE.
+    43: optional map<string, TFileReadResource> file_read_resources
 }
 
 struct TFileRangeDesc {

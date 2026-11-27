@@ -838,6 +838,8 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String ENABLE_PAIMON_RUST_READER = "enable_paimon_rust_reader";
 
+    public static final String PAIMON_BLOB_MAX_SIZE = "paimon_blob_max_size";
+
     public static final String ENABLE_COUNT_PUSH_DOWN_FOR_EXTERNAL_TABLE = "enable_count_push_down_for_external_table";
 
     public static final String FETCH_ALL_FE_FOR_SYSTEM_TABLE = "fetch_all_fe_for_system_table";
@@ -3134,6 +3136,12 @@ public class SessionVariable implements Serializable, Writable {
             fuzzy = true,
             description = "Prefer paimon-rust for eligible Paimon reads")
     private boolean enablePaimonRustReader = false;
+
+    @VarAttrDef.VarAttr(name = PAIMON_BLOB_MAX_SIZE, needForward = true,
+            checker = "checkPaimonBlobMaxSize",
+            description = "Maximum inline payload size in bytes for one Paimon BLOB value. "
+                    + "Larger values fail the query. Descriptor output is exempt.")
+    private long paimonBlobMaxSize = 10L * 1024 * 1024;
 
     @VarAttrDef.VarAttr(name = ENABLE_COUNT_PUSH_DOWN_FOR_EXTERNAL_TABLE,
             fuzzy = true,
@@ -5991,6 +5999,7 @@ public class SessionVariable implements Serializable, Writable {
         tResult.setEmbedMaxBatchSize(embedMaxBatchSize);
         tResult.setAiContextWindowSize(aiContextWindowSize);
         tResult.setEnablePaimonRustReader(enablePaimonRustReader);
+        tResult.setPaimonBlobMaxSize(paimonBlobMaxSize);
         tResult.setCheckOrcInitSargsSuccess(checkOrcInitSargsSuccess);
 
         tResult.setTruncateCharOrVarcharColumns(truncateCharOrVarcharColumns);
@@ -6664,6 +6673,14 @@ public class SessionVariable implements Serializable, Writable {
 
     public void checkEmbedMaxBatchSize(String value) throws Exception {
         checkFieldValue(EMBED_MAX_BATCH_SIZE, 1, value);
+    }
+
+    public void checkPaimonBlobMaxSize(String value) {
+        long size = Long.parseLong(value);
+        if (size < 1 || size > Integer.MAX_VALUE) {
+            throw new InvalidParameterException(PAIMON_BLOB_MAX_SIZE
+                    + " must be between 1 and " + Integer.MAX_VALUE + " bytes");
+        }
     }
 
     public void checkAiContextWindowSize(String value) throws Exception {

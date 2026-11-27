@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -159,6 +160,9 @@ struct ColumnMapping {
     // Paimon TIMESTAMP precision narrowing uses truncation instead of the ordinary SQL CAST
     // rounding behavior. This is carried recursively so nested timestamp children follow it too.
     bool truncate_datetimev2_precision = false;
+    // The table reader materializes this BLOB column after ordinary finalize.
+    // Preserve any physical source, but never cast it or push logical BLOB predicates into it.
+    bool requires_blob_materialization = false;
     // How filters referencing this table/global column can be converted below table-reader
     // finalize. This is metadata for localize_filters() and future constant-filter evaluation.
     FilterConversionType filter_conversion = FilterConversionType::FINALIZE_ONLY;
@@ -167,6 +171,10 @@ struct ColumnMapping {
 
     std::string debug_string() const;
 };
+
+// Inputs needed by a BLOB column materialized by the owning TableReader.
+// PHYSICAL_COLUMN preserves the matched physical tree without interpreting it as the output type.
+enum class BlobMaterializationInput { NONE, PHYSICAL_COLUMN };
 
 struct TableColumnMapperOptions {
     TableColumnMappingMode mode = TableColumnMappingMode::BY_FIELD_ID;
@@ -180,6 +188,10 @@ struct TableColumnMapperOptions {
     // Paimon schema evolution truncates timestamp precision. This must not reuse the SQL CAST
     // behavior, which rounds when reducing DATETIMEV2 scale.
     bool truncate_datetimev2_precision_for_paimon = false;
+    // BLOB columns materialized by TableReader, keyed by query output position rather than
+    // file ordinal or field ID. Matching, physical projection and local positions remain
+    // mapper-owned; logical BLOB predicates stay above physical input materialization.
+    std::map<GlobalIndex, BlobMaterializationInput> table_reader_materialized_blob_columns {};
 
     std::string debug_string() const;
 };

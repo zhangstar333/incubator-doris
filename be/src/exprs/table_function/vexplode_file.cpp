@@ -29,7 +29,7 @@ VExplodeFileTableFunction::VExplodeFileTableFunction() {
     _fn_name = "vexplode_file";
 }
 
-Status VExplodeFileTableFunction::process_init(Block* block, RuntimeState* state) {
+Status VExplodeFileTableFunction::process_init(Block* block, RuntimeState* /*state*/) {
     const auto& children = _expr_context->root()->children();
     DORIS_CHECK(children.size() == 1);
     ColumnPtr input;

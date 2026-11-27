@@ -860,6 +860,9 @@ Status TableFunctionOperatorX::prepare(doris::RuntimeState* state) {
         RETURN_IF_ERROR(fn->prepare());
     }
     RETURN_IF_ERROR(VExpr::prepare(_vfn_ctxs, state, operator_row_desc_before_projection()));
+    // Argument expressions can explicitly read FILE content through fl_get_binary.
+    // Resolve their IO policy before the task is first scheduled.
+    _blockable |= VExpr::contains_blockable_function(_vfn_ctxs);
 
     RETURN_IF_ERROR(
             VExpr::prepare(_expand_conjuncts_ctxs, state, operator_row_desc_before_projection()));

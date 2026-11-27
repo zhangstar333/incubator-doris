@@ -33,6 +33,18 @@ import java.util.Arrays;
 public class PaimonReadTypeProjectionTest {
 
     @Test
+    public void fileProjectionRetainsLogicalBlobInsideCollections() {
+        DataType[] sources = {DataTypes.BLOB(), DataTypes.ARRAY(DataTypes.BLOB()),
+                DataTypes.MAP(DataTypes.STRING(), DataTypes.BLOB()),
+                DataTypes.ROW(new DataField(7, "payload", DataTypes.BLOB()))};
+        String[] types = {"file", "array<file>", "map<string,file>", "struct<payload:file>"};
+        for (int i = 0; i < sources.length; i++) {
+            Assertions.assertEquals(sources[i], PaimonReadTypeProjection.project(
+                    sources[i], ColumnType.parseType("payload", types[i])));
+        }
+    }
+
+    @Test
     public void projectNestedRowArrayAndMapKeepingPaimonIdentity() {
         RowType profileType = new RowType(false, Arrays.asList(
                 new DataField(2, "city", DataTypes.STRING(), "city description"),

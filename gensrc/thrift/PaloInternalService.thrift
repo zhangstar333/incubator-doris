@@ -813,6 +813,9 @@ struct TPipelineFragmentParams {
   45: optional map<string, TAIResource> ai_resources
   46: optional bool need_notify_close
 
+  // 47: optional map<string, Types.TS3Resource> s3_resources // Used by branch-4.1.
+  48: optional map<i32, PlanNodes.TFileReadResource> file_read_resources
+
   // For cloud
   1000: optional bool is_mow_table;
   1001: optional bool enable_tso;

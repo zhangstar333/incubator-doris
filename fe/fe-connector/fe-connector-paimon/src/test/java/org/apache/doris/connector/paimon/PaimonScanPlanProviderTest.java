@@ -52,6 +52,8 @@ import org.apache.paimon.data.GenericRow;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.deletionvectors.BitmapDeletionVector;
 import org.apache.paimon.deletionvectors.append.BaseAppendDeleteFileMaintainer;
+import org.apache.paimon.disk.IOManager;
+import org.apache.paimon.disk.IOManagerImpl;
 import org.apache.paimon.fs.FileStatus;
 import org.apache.paimon.fs.local.LocalFileIO;
 import org.apache.paimon.index.IndexFileMeta;
@@ -145,6 +147,119 @@ public class PaimonScanPlanProviderTest {
     public void scanReuseNamespaceUsesConnectorType() {
         String prefix = new PaimonConnectorProvider().getType() + ".";
         Assertions.assertTrue(PaimonScanPlanProvider.SCAN_REUSE_NAMESPACE.startsWith(prefix));
+    }
+
+    @Test
+    public void declaresNativeFileResourcesAndKeepsLocalAndDescriptorScansUnbound() {
+        PaimonScanPlanProvider provider = new PaimonScanPlanProvider(
+                PaimonCatalogProperties.of(Collections.emptyMap()), new RecordingPaimonCatalogOps());
+        Map<String, String> props = new HashMap<>();
+        props.put("paimon.blob.reading", "true");
+        props.put("paimon.options_json", "{}");
+        org.apache.doris.thrift.TFileScanRangeParams params = new org.apache.doris.thrift.TFileScanRangeParams()
+                .setFileType(org.apache.doris.thrift.TFileType.FILE_S3)
+                .setProperties(new HashMap<>(Collections.singletonMap("AWS_ENDPOINT", "http://minio:9000")));
+        provider.populateScanLevelParams(params, props);
+        Assertions.assertEquals(4, params.getFileReadResourcesSize());
+        Assertions.assertFalse(params.getFileReadResources().get("paimon-range").getPaimon().isValidateRecord());
+        Assertions.assertTrue(params.getFileReadResources().get("paimon-record").getPaimon().isValidateRecord());
+        Assertions.assertTrue(params.getFileReadResources().get("paimon-range").getPaimon().isFileCacheAdmission());
+        Assertions.assertFalse(params.getFileReadResources().get("paimon-range-no-cache")
+                .getPaimon().isFileCacheAdmission());
+        params.getProperties().clear();
+        Assertions.assertEquals("http://minio:9000", params.getFileReadResources().get("paimon-range")
+                .getPaimon().getProperties().get("AWS_ENDPOINT"));
+        props.put("paimon.options_json", "{\"blob-as-descriptor\":\"true\"}");
+        provider.populateScanLevelParams(params, props);
+        Assertions.assertFalse(params.isSetFileReadResources());
+        props.put("paimon.options_json", "{}");
+        params.setFileType(org.apache.doris.thrift.TFileType.FILE_LOCAL);
+        provider.populateScanLevelParams(params, props);
+        Assertions.assertFalse(params.isSetFileReadResources());
+    }
+
+    @Test
+    public void managedBlobReadsUseNativeInputsAndRetainJniFallback(@TempDir Path warehouse) throws Exception {
+        try (Catalog catalog = new FileSystemCatalog(LocalFileIO.create(),
+                new org.apache.paimon.fs.Path(warehouse.toUri()))) {
+            catalog.createDatabase("db", false);
+            for (String name : Arrays.asList("append_blob", "pk_raw_blob", "pk_merge_blob")) {
+                boolean primaryKey = name.startsWith("pk_");
+                boolean requiresMerge = name.equals("pk_merge_blob");
+                Identifier id = Identifier.create("db", name);
+                Schema.Builder schema = Schema.newBuilder().column("id", DataTypes.INT())
+                        .column("payload", DataTypes.BLOB()).option("blob-field", "payload")
+                        .option("file.format", "parquet");
+                if (primaryKey) {
+                    schema.primaryKey("id").option("bucket", "1")
+                            .option("deletion-vectors.enabled", String.valueOf(!requiresMerge))
+                            .option("changelog-producer", "none");
+                } else {
+                    schema.option("bucket", "-1").option("row-tracking.enabled", "true")
+                            .option("data-evolution.enabled", "true");
+                }
+                catalog.createTable(id, schema.build(), false);
+                FileStoreTable table = (FileStoreTable) catalog.getTable(id);
+                BatchWriteBuilder writer = table.newBatchWriteBuilder();
+                try (IOManager ioManager = new IOManagerImpl(warehouse.toString());
+                        BatchTableWrite write = writer.newWrite().withIOManager(ioManager);
+                        BatchTableCommit commit = writer.newCommit()) {
+                    write.write(GenericRow.of(1, org.apache.paimon.data.Blob.fromData(new byte[] {0, 1, -1})));
+                    write.write(GenericRow.of(2, null));
+                    commit.commit(write.prepareCommit());
+                }
+                if (requiresMerge) {
+                    BatchWriteBuilder update = table.newBatchWriteBuilder();
+                    try (IOManager ioManager = new IOManagerImpl(warehouse.toString());
+                            BatchTableWrite write = update.newWrite().withIOManager(ioManager);
+                            BatchTableCommit commit = update.newCommit()) {
+                        write.write(GenericRow.of(1, org.apache.paimon.data.Blob.fromData(new byte[] {42})));
+                        commit.commit(write.prepareCommit());
+                    }
+                }
+                RecordingPaimonCatalogOps ops = new RecordingPaimonCatalogOps();
+                ops.table = catalog.getTable(id);
+                PaimonScanPlanProvider provider = new PaimonScanPlanProvider(
+                        PaimonCatalogProperties.of(Collections.emptyMap()), ops);
+                PaimonTableHandle handle = new PaimonTableHandle("db", name, Collections.emptyList(),
+                        Collections.emptyList());
+                List<ConnectorColumnHandle> columns = Arrays.asList(new PaimonColumnHandle("id", 0),
+                        new PaimonColumnHandle("payload", 1));
+                for (boolean forceJni : Arrays.asList(false, true)) {
+                    List<ConnectorScanRange> ranges = provider.planScan(
+                            sessionWithProps(Collections.singletonMap("force_jni_scanner", String.valueOf(forceJni))),
+                            ConnectorScanRequest.builder(handle, columns).build());
+                    Assertions.assertFalse(ranges.isEmpty());
+                    for (ConnectorScanRange range : ranges) {
+                        Assertions.assertEquals(!forceJni && !requiresMerge, range.isNativeReadRange());
+                        org.apache.doris.thrift.TTableFormatFileDesc format =
+                                new org.apache.doris.thrift.TTableFormatFileDesc();
+                        range.populateRangeParams(format, new org.apache.doris.thrift.TFileRangeDesc());
+                        org.apache.doris.thrift.TPaimonFileDesc params = format.getPaimonParams();
+                        if (forceJni || requiresMerge) {
+                            Assertions.assertFalse(params.isSetBlobFiles());
+                            Assertions.assertFalse(params.isSetBlobDescriptorFieldIds());
+                        } else if (primaryKey) {
+                            Assertions.assertEquals(Collections.singletonList(1), params.getBlobDescriptorFieldIds());
+                        } else {
+                            Assertions.assertFalse(params.getBlobFiles().isEmpty());
+                            Assertions.assertEquals(2, params.getAnchorRowCount());
+                            Assertions.assertEquals(1, params.getBlobFiles().get(0).getFieldId());
+                        }
+                    }
+                }
+                Assertions.assertThrows(org.apache.doris.connector.spi.DorisConnectorException.class,
+                        () -> provider.planScan(sessionWithProps(Collections.singletonMap(
+                                "enable_file_scanner_v2", "false")), ConnectorScanRequest.builder(handle, columns).build()));
+                Assertions.assertEquals("FILE", PaimonTypeMapping.toConnectorType(
+                        table.rowType().getTypeAt(1), PaimonTypeMapping.Options.DEFAULT).getTypeName());
+                if (primaryKey) {
+                    Assertions.assertEquals(Collections.singletonList(1),
+                            PaimonBlobScanPlanner.descriptorFieldIds(table, Collections.singleton("payload")));
+                    Assertions.assertTrue(PaimonBlobScanPlanner.descriptorFieldIds(table, Collections.singleton("id")).isEmpty());
+                }
+            }
+        }
     }
 
     private static RowType rowType(String... columnNames) {

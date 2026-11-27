@@ -41,6 +41,25 @@ import java.util.Locale;
 class ConnectorColumnConverterTest {
 
     @Test
+    void fileUsesCanonicalCatalogType() {
+        Type file = ConnectorColumnConverter.convertType(ConnectorType.of("FILE"));
+        Assertions.assertEquals(Type.FILE, file);
+        Assertions.assertEquals("FILE", ConnectorColumnConverter.toConnectorType(file).getTypeName());
+    }
+
+    @Test
+    void testFileIdentitySurvivesNestedConnectorRoundtrip() {
+        ConnectorType file = ConnectorType.of("FILE");
+        for (ConnectorType type : Arrays.asList(file, ConnectorType.arrayOf(file),
+                ConnectorType.mapOf(ConnectorType.of("STRING"), file),
+                ConnectorType.structOf(Collections.singletonList("payload"), Collections.singletonList(file)))) {
+            Type converted = ConnectorColumnConverter.convertType(type);
+            Assertions.assertTrue(converted.typeContainsFile());
+            Assertions.assertEquals(type, ConnectorColumnConverter.toConnectorType(converted));
+        }
+    }
+
+    @Test
     void testUnknownKeepsDisplayIdentityAndUsesNullExecutionType() {
         Type unknown = ConnectorColumnConverter.convertType(ConnectorType.of("UNKNOWN"));
         Assertions.assertInstanceOf(ConnectorUnknownType.class, unknown);

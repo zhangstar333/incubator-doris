@@ -36,9 +36,13 @@ import org.apache.doris.connector.spi.scan.ConnectorScanRequest;
 import org.apache.doris.connector.spi.scan.ScanNodePropertyKeys;
 import org.apache.doris.filesystem.properties.StorageProperties;
 import org.apache.doris.thrift.TColumnType;
+import org.apache.doris.thrift.TFileReadResource;
 import org.apache.doris.thrift.TFileScanRangeParams;
+import org.apache.doris.thrift.TFileType;
 import org.apache.doris.thrift.TPaimonDeletionFileDesc;
 import org.apache.doris.thrift.TPaimonFileDesc;
+import org.apache.doris.thrift.TPaimonFileReadResource;
+import org.apache.doris.thrift.TPaimonTableType;
 import org.apache.doris.thrift.TPrimitiveType;
 import org.apache.doris.thrift.TTableFormatFileDesc;
 import org.apache.doris.thrift.schema.external.TArrayField;
@@ -118,6 +122,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -839,6 +844,20 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
                         c.getName().toLowerCase()))
                 .filter(i -> optionsPin || i >= 0)
                 .toArray();
+        Set<String> projectedNames = columns.stream().map(PaimonColumnHandle.class::cast)
+                .map(PaimonColumnHandle::getName)
+                .map(name -> name.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
+        boolean hasBlobProjection = rowType.getFields().stream().anyMatch(field ->
+                projectedNames.contains(field.name().toLowerCase(Locale.ROOT))
+                        && PaimonBlobScanPlanner.containsBlob(field.type()));
+        if (hasBlobProjection && !Boolean.parseBoolean(session.getSessionProperties()
+                .getOrDefault("enable_file_scanner_v2", "true"))) {
+            throw new DorisConnectorException("Paimon BLOB columns require enable_file_scanner_v2=true"
+                    + " for both native and JNI readers");
+        }
+        List<Integer> blobDescriptorFieldIds = hasBlobProjection && !paimonHandle.isForceJni()
+                && !isForceJniScannerEnabled(session) && !usesFallbackRead(table, paimonHandle)
+                ? PaimonBlobScanPlanner.descriptorFieldIds(table, projectedNames) : Collections.emptyList();
         boolean hasVariantProjection = Arrays.stream(projected)
                 .filter(index -> index >= 0)
                 .anyMatch(index -> containsVariant(rowType.getTypeAt(index)));
@@ -912,7 +931,7 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
         boolean incrementalRead = pinnedOptions.containsKey("incremental-between")
                 || pinnedOptions.containsKey("incremental-between-timestamp");
         PaimonRustReaderSelector rustReaderSelector = table instanceof FileStoreTable
-                && !requiresMetadataColumns
+                && !requiresMetadataColumns && !hasBlobProjection
                 ? new PaimonRustReaderSelector(session, backendsSupportRust,
                         (FileStoreTable) table, columns, backendStorageProperties(),
                         usesFallbackRead(table, paimonHandle), incrementalRead, hasVariantProjection)
@@ -967,6 +986,8 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
         // lazily ONCE on the first native split (legacy hasDeterminedTargetFileSplitSize parity).
         long targetSplitSize = -1;
         long coarseTargetSplitSize = -1;
+        long blobTargetSplitSize = hasBlobProjection
+                ? resolveTargetSplitSize(session, dataSplits, coarseSplitSize) : -1;
 
         Set<Long> physicalVariantSchemaIds = hasVariantProjection
                 ? physicalVariantSchemaIds(table, paimonHandle, rowType, columns, dataSplits)
@@ -976,6 +997,8 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
         Map<FileStoreTable, Map<Long, Boolean>> legacyOrcTimestampSchemas = new java.util.IdentityHashMap<>();
         Map<FileStoreTable, Map<Long, Boolean>> crossFamilyTimestampSchemas = new java.util.IdentityHashMap<>();
         Set<Integer> readFieldIds = scanReadFieldIds(rowType, columns, filter);
+        RowType blobReadType = new RowType(rowType.getFields().stream()
+                .filter(field -> readFieldIds.contains(field.id())).collect(Collectors.toList()));
         // Native INT96/ORC materialization currently narrows these values to microseconds.
         // JNI retains the source precision, including nested and filter-only timestamp fields.
         boolean needsNanosecondReader = rowType.getFields().stream()
@@ -1009,11 +1032,33 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
             Map<String, String> partitionValues = getPartitionInfoMap(
                     table, dataSplit.partition(), session.getTimeZone());
 
+            if (hasBlobProjection && table instanceof FileStoreTable
+                    && !paimonHandle.isForceJni() && !isForceJniScannerEnabled(session)
+                    && !needsNanosecondReader && !usesFallbackRead(table, paimonHandle)) {
+                Optional<List<PaimonScanRange>> blobRanges = withSchemaHistoryAuthentication(() ->
+                        new PaimonBlobScanPlanner((FileStoreTable) table, path -> normalizeUri(path, vendedToken),
+                                anchor -> supportsBlobAnchor((FileStoreTable) table, blobReadType, anchor,
+                                        crossFamilyTimestampSchemas.computeIfAbsent((FileStoreTable) table,
+                                                ignored -> new HashMap<>())))
+                                .planAppend(dataSplit, projectedNames, partitionValues,
+                                        blobTargetSplitSize, weightDenominator));
+                if (blobRanges.isPresent()) {
+                    if (!ignoreNative) {
+                        ranges.addAll(blobRanges.get());
+                    }
+                    continue;
+                }
+            }
+
             Optional<List<RawFile>> optRawFiles = dataSplit.convertToRawFiles();
             Optional<List<DeletionFile>> optDeletionFiles = dataSplit.deletionFiles();
 
-            boolean nativeEligible = shouldUseNativeReader(paimonHandle.isForceJni() || needsNanosecondReader,
+            boolean nativeEligible = (!hasBlobProjection || !blobDescriptorFieldIds.isEmpty())
+                    && shouldUseNativeReader(paimonHandle.isForceJni() || needsNanosecondReader,
                     isForceJniScannerEnabled(session), hasVariantProjection, physicalVariantSchemaIds, optRawFiles);
+            if (hasBlobProjection && nativeEligible) {
+                nativeEligible = optRawFiles.get().stream().allMatch(file -> file.path().endsWith(".parquet"));
+            }
             boolean rustEligible = rustReaderSelector != null && rustReaderSelector.canRead(dataSplit);
             boolean legacyOrcTimestamp = false;
             if (nativeEligible && containsTimestampType(rowType) && (!rustEligible || aggregatePushdown)) {
@@ -1076,7 +1121,7 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
                                     ? optDeletionFiles.get().get(i) : null;
                     ranges.addAll(buildNativeRanges(file, deletionFile, defaultFileFormat,
                             partitionValues, vendedToken, effectiveSplitSize, nativeWeightTarget,
-                            dataSplit.bucket()));
+                            dataSplit.bucket(), blobDescriptorFieldIds));
                 }
             } else {
                 // Logical fallback after Rust/native eligibility checks.
@@ -1107,6 +1152,14 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
         }
 
         return ranges;
+    }
+
+    private static boolean supportsBlobAnchor(FileStoreTable table, RowType readType, DataFileMeta anchor,
+            Map<Long, Boolean> schemaTimestamps) {
+        // Companion-file planning bypasses convertToRawFiles. Preserve the same timestamp fallback
+        // as ordinary native files when a historical timestamp changes family and narrows precision.
+        return !containsTimestampType(readType) || !schemaTimestamps.computeIfAbsent(anchor.schemaId(), id ->
+                hasTimestampPrecisionNarrowing(table.schemaManager().schema(id).logicalRowType(), readType, 0, true));
     }
 
     private static boolean supportsJniPhysicalMetadata(Table table, DataSplit split) {
@@ -1148,6 +1201,14 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
             String defaultFileFormat, Map<String, String> partitionValues,
             Map<String, String> vendedToken, long start, long length, long weightDenominator,
             int bucket) {
+        return buildNativeRange(file, deletionFile, defaultFileFormat, partitionValues, vendedToken,
+                start, length, weightDenominator, bucket, Collections.emptyList());
+    }
+
+    private PaimonScanRange buildNativeRange(RawFile file, DeletionFile deletionFile,
+            String defaultFileFormat, Map<String, String> partitionValues,
+            Map<String, String> vendedToken, long start, long length, long weightDenominator,
+            int bucket, List<Integer> blobDescriptorFieldIds) {
         String fileFormat = getFileFormatBySuffix(file.path()).orElse(defaultFileFormat);
         // FIX-A1: native sub-split FE weight = the sub-range byte length, + the deletion-vector length when
         // attached (legacy PaimonSplit(LocationPath,...).selfSplitWeight = length, setDeletionFile += DV).
@@ -1165,6 +1226,7 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
                 .selfSplitWeight(selfSplitWeight)
                 .targetSplitSize(weightDenominator)
                 .schemaId(file.schemaId())
+                .blobDescriptorFieldIds(blobDescriptorFieldIds)
                 .bucket(bucket);
         if (deletionFile != null) {
             builder.deletionFile(
@@ -1189,10 +1251,19 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
             String defaultFileFormat, Map<String, String> partitionValues,
             Map<String, String> vendedToken, long targetSplitSize, long weightDenominator,
             int bucket) {
+        return buildNativeRanges(file, deletionFile, defaultFileFormat, partitionValues, vendedToken,
+                targetSplitSize, weightDenominator, bucket, Collections.emptyList());
+    }
+
+    private List<PaimonScanRange> buildNativeRanges(RawFile file, DeletionFile deletionFile,
+            String defaultFileFormat, Map<String, String> partitionValues,
+            Map<String, String> vendedToken, long targetSplitSize, long weightDenominator,
+            int bucket, List<Integer> blobDescriptorFieldIds) {
         List<PaimonScanRange> result = new ArrayList<>();
         for (long[] offset : computeFileSplitOffsets(file.length(), targetSplitSize)) {
             result.add(buildNativeRange(file, deletionFile, defaultFileFormat,
-                    partitionValues, vendedToken, offset[0], offset[1], weightDenominator, bucket));
+                    partitionValues, vendedToken, offset[0], offset[1], weightDenominator, bucket,
+                    blobDescriptorFieldIds));
         }
         return result;
     }
@@ -1230,9 +1301,15 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
 
         Map<String, String> props = new LinkedHashMap<>();
 
-        if (requiresMetadataColumns(columns)) {
+        boolean hasBlobProjection = table.rowType().getFields().stream().anyMatch(field ->
+                PaimonBlobScanPlanner.containsBlob(field.type()) && columns.stream().anyMatch(column ->
+                        ((PaimonColumnHandle) column).getName().equalsIgnoreCase(field.name())));
+        if (hasBlobProjection && !paimonHandle.isForceJni() && !isForceJniScannerEnabled(session)) {
+            props.put("paimon.blob.reading", "true");
+        }
+        if (requiresMetadataColumns(columns) || hasBlobProjection) {
             props.put(ScanNodePropertyKeys.REQUIRED_CURRENT_BACKEND_SEMANTICS,
-                    "Current Paimon metadata column semantics");
+                    hasBlobProjection ? "Paimon BLOB reading" : "Current Paimon metadata column semantics");
         }
 
         // File format type (default)
@@ -1280,6 +1357,8 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
 
         // Paimon JDBC metastore options for BE (if applicable)
         Map<String, String> backendOptions = new LinkedHashMap<>(getBackendPaimonOptions());
+        backendOptions.put(CoreOptions.BLOB_AS_DESCRIPTOR.key(),
+                String.valueOf(new Options(table.options()).get(CoreOptions.BLOB_AS_DESCRIPTOR)));
         Set<Integer> readFieldIds = scanReadFieldIds(table.rowType(), columns, filter);
         boolean readsTimestamp = table.rowType().getFields().stream().anyMatch(field ->
                 readFieldIds.contains(field.id())
@@ -2734,6 +2813,35 @@ public class PaimonScanPlanProvider implements ConnectorScanPlanProvider {
                 params.setPaimonOptions(options);
             } catch (Exception e) {
                 LOG.warn("Failed to parse paimon.options_json", e);
+            }
+        }
+
+        params.unsetFileReadResources();
+        if (Boolean.parseBoolean(properties.get("paimon.blob.reading"))
+                && params.isSetFileType() && params.getFileType() != TFileType.FILE_LOCAL
+                && !Boolean.parseBoolean(params.getPaimonOptions() == null
+                        ? "false" : params.getPaimonOptions().get("blob-as-descriptor"))) {
+            // JNI ignores these resources and continues returning inline FILE values. Native readers
+            // select raw ranges for PK tables and validated records for append tables.
+            for (TPaimonTableType tableType : TPaimonTableType.values()) {
+                for (boolean admission : new boolean[] {false, true}) {
+                    TPaimonFileReadResource provider = new TPaimonFileReadResource()
+                            .setFileType(params.getFileType()).setTableType(tableType)
+                            .setFileCacheAdmission(admission);
+                    if (params.isSetProperties()) {
+                        provider.setProperties(new TreeMap<>(params.getProperties()));
+                    }
+                    if (params.isSetHdfsParams()) {
+                        provider.setHdfsParams(params.getHdfsParams().deepCopy());
+                    }
+                    if (params.isSetBrokerAddresses()) {
+                        provider.setBrokerAddresses(new ArrayList<>(params.getBrokerAddresses()));
+                    }
+                    String key = (tableType == TPaimonTableType.APPEND
+                            ? "paimon-record" : "paimon-range") + (admission ? "" : "-no-cache");
+                    params.putToFileReadResources(key,
+                            new TFileReadResource().setPaimon(provider));
+                }
             }
         }
 

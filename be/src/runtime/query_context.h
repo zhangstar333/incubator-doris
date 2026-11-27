@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -112,6 +113,11 @@ public:
     void init_query_task_controller();
 
     ExecEnv* exec_env() const { return _exec_env; }
+    // Definitions are installed before fragments start and remain query-owned after scanner EOF.
+    Status init_file_read_resources(std::map<int32_t, TFileReadResource> resources_by_source_id);
+    const std::map<int32_t, TFileReadResource>& get_file_read_resources() const {
+        return _file_read_resources;
+    }
 
     bool is_timeout(timespec now) const {
         if (_timeout_second <= 0) {
@@ -412,6 +418,7 @@ private:
     std::shared_ptr<std::map<std::string, TAIResource>> _ai_resources;
     mutable std::mutex _ai_statistics_mutex;
     std::unordered_map<int, std::shared_ptr<AIExecutionStatistics>> _ai_statistics;
+    std::map<int32_t, TFileReadResource> _file_read_resources;
 
     void _report_query_profile();
 
